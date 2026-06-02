@@ -2,7 +2,7 @@
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <title>Musene Danser - NXT/Care</title>
+  <title>Musene Danser - NXT/Care (Take 2)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
     :root {
@@ -96,8 +96,7 @@
   <script type="importmap">
     {
       "imports": {
-        "three": "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js",
-        "GLTFLoader": "https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/loaders/GLTFLoader.js"
+        "three": "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js"
       }
     }
   </script>
@@ -123,7 +122,9 @@
   <audio id="score1-sound" preload="auto" src="score1.mp3"></audio>
   <audio id="score2-sound" preload="auto" src="score2.mp3"></audio>
   <audio id="score3-sound" preload="auto" src="score3.mp3"></audio>
-  <audio id="death-sound" preload="auto" src="dead.mp3"></audio> <script type="module">
+  <audio id="death-sound" preload="auto" src="dead.mp3"></audio> 
+
+  <script type="module">
     import * as THREE from 'three';
 
     // --- GAME STATE ---
@@ -138,6 +139,7 @@
 
     const CONSTANTS = {
       selectTime: 4000, holdTime: 3000, clapDist: 0.15, clapTime: 6000,
+      trackY: -0.15, // NEW: Hovering safely above the table, away from the face
       hitZoneZ: -0.6, spawnZ: -4.0, hitTolerance: 0.25
     };
 
@@ -146,6 +148,7 @@
     let tableGroup, playerMouse, bgMice = [], scorePanel, comboText;
     let controllers = [], particles = [], particlePool = [];
     let notes = [], hitRing;
+    let noteMaterials = []; // Cached textures
     let clapStart = 0, clapHUD = null;
     
     // Input Gestures
@@ -180,7 +183,6 @@
       renderer.outputEncoding = THREE.sRGBEncoding;
       document.body.appendChild(renderer.domElement);
 
-      // Warm, cozy lighting
       scene.add(new THREE.AmbientLight(0xffeacc, 0.4));
       const candleLight = new THREE.PointLight(0xffaa55, 1.2, 5);
       candleLight.position.set(0, 0.5, -1);
@@ -190,7 +192,6 @@
       rimLight.position.set(-2, 2, -3);
       scene.add(rimLight);
 
-      // Setup particles
       const pGeo = new THREE.PlaneGeometry(0.05, 0.05);
       const pMat = new THREE.MeshBasicMaterial({ color: 0xffdd88, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
       for (let i = 0; i < 100; i++) {
@@ -198,6 +199,8 @@
         m.visible = false; scene.add(m);
         particlePool.push({ mesh: m, active: false, life: 0, vel: new THREE.Vector3(), rot: 0 });
       }
+
+      generateNoteTextures(); // Pre-cache massive unmissable icons
 
       const launchBtn = document.getElementById('launch-button');
       launchBtn.addEventListener('click', () => {
@@ -210,10 +213,56 @@
         startAR();
       });
 
-      // Using same background music variable, replace with rhythmic track later
       backgroundMusic = new Audio('Gentlelane.mp3');
       backgroundMusic.loop = true; backgroundMusic.volume = 0.7;
       document.getElementById('exit-ar').addEventListener('click', endAR);
+    }
+
+    // --- VISUAL ICONS (NO TEXT, PURE SHAPES) ---
+    function generateNoteTextures() {
+      const colors = ['#4ade80', '#f472b6', '#60a5fa', '#fb923c']; // Up, Down, Left, Right
+
+      for (let i = 0; i < 4; i++) {
+        const cvs = document.createElement('canvas');
+        cvs.width = 256; cvs.height = 256;
+        const ctx = cvs.getContext('2d');
+        const w = cvs.width, h = cvs.height;
+
+        // Base Circle
+        ctx.fillStyle = colors[i];
+        ctx.beginPath(); ctx.arc(w/2, h/2, w/2 - 10, 0, Math.PI*2); ctx.fill();
+        ctx.lineWidth = 12; ctx.strokeStyle = 'white'; ctx.stroke();
+
+        ctx.fillStyle = 'white';
+        ctx.beginPath();
+        
+        if (i === 0) { // Massive UP Arrow
+          ctx.moveTo(w/2, 40); ctx.lineTo(w-50, 130); ctx.lineTo(w/2+30, 130);
+          ctx.lineTo(w/2+30, 200); ctx.lineTo(w/2-30, 200); ctx.lineTo(w/2-30, 130);
+          ctx.lineTo(50, 130); ctx.fill();
+        } 
+        else if (i === 1) { // Massive DOWN Arrow
+          ctx.moveTo(w/2, 216); ctx.lineTo(w-50, 126); ctx.lineTo(w/2+30, 126);
+          ctx.lineTo(w/2+30, 56); ctx.lineTo(w/2-30, 56); ctx.lineTo(w/2-30, 126);
+          ctx.lineTo(50, 126); ctx.fill();
+        } 
+        else if (i === 2) { // Massive LEFT Twist (Counter-Clockwise)
+          ctx.arc(w/2, h/2 + 10, 60, Math.PI * 1.5, Math.PI * 0.5, true); 
+          ctx.lineWidth = 30; ctx.strokeStyle = 'white'; ctx.stroke();
+          // Arrowhead
+          ctx.beginPath(); ctx.moveTo(w/2 + 20, h/2 - 80); ctx.lineTo(w/2 - 40, h/2 - 50); ctx.lineTo(w/2 + 20, h/2 - 20); ctx.fill();
+        } 
+        else if (i === 3) { // Massive RIGHT Twist (Clockwise)
+          ctx.arc(w/2, h/2 + 10, 60, Math.PI * 1.5, Math.PI * 0.5, false); 
+          ctx.lineWidth = 30; ctx.strokeStyle = 'white'; ctx.stroke();
+          // Arrowhead
+          ctx.beginPath(); ctx.moveTo(w/2 - 20, h/2 - 80); ctx.lineTo(w/2 + 40, h/2 - 50); ctx.lineTo(w/2 - 20, h/2 - 20); ctx.fill();
+        }
+
+        noteMaterials.push(new THREE.MeshBasicMaterial({ 
+          map: makeUITexture(cvs), transparent: true, opacity: 0.95 
+        }));
+      }
     }
 
     // --- XR SESSION ---
@@ -256,7 +305,6 @@
     function buildWorld() {
       tableGroup = new THREE.Group();
       
-      // The Dark Wooden Table
       const tableGeo = new THREE.BoxGeometry(4, 0.1, 3);
       const tableMat = new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.9, metalness: 0.1 });
       const table = new THREE.Mesh(tableGeo, tableMat);
@@ -264,30 +312,28 @@
       tableGroup.add(table);
       scene.add(tableGroup);
 
-      // Create Cute Mice
-      playerMouse = createMouse(0xaaaaaa); // Grey player
+      playerMouse = createMouse(0xaaaaaa); 
       playerMouse.position.set(0, -0.35, -1.2);
       scene.add(playerMouse);
 
-      // Background dancing mice
-      const bgMouse1 = createMouse(0x8d6e63); // Brown
+      const bgMouse1 = createMouse(0x8d6e63); 
       bgMouse1.position.set(-0.6, -0.35, -2.0);
       bgMouse1.rotation.y = 0.5;
       scene.add(bgMouse1);
       bgMice.push({ mesh: bgMouse1, offset: 0 });
 
-      const bgMouse2 = createMouse(0xefeed4); // White/Cream
+      const bgMouse2 = createMouse(0xefeed4); 
       bgMouse2.position.set(0.6, -0.35, -1.8);
       bgMouse2.rotation.y = -0.5;
       scene.add(bgMouse2);
       bgMice.push({ mesh: bgMouse2, offset: Math.PI });
 
-      // Hit Ring for rhythm game
+      // Hit Ring positioned SAFELY LOWER (Chest/Stomach height, below face)
       hitRing = new THREE.Mesh(
-        new THREE.RingGeometry(0.18, 0.2, 32),
+        new THREE.RingGeometry(0.13, 0.16, 32),
         new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
       );
-      hitRing.position.set(0, 0, CONSTANTS.hitZoneZ);
+      hitRing.position.set(0, CONSTANTS.trackY, CONSTANTS.hitZoneZ);
       scene.add(hitRing);
 
       buildUI();
@@ -296,7 +342,6 @@
     function createMouse(colorHex) {
       const group = new THREE.Group();
       
-      // Body (Drop shape approximated with Capsule)
       const body = new THREE.Mesh(
         new THREE.CapsuleGeometry(0.08, 0.08, 8, 16),
         new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.8 })
@@ -304,7 +349,6 @@
       body.position.y = 0.1;
       group.add(body);
 
-      // Big round ears
       const earMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 1.0 });
       const earL = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.01, 16), earMat);
       earL.rotation.x = Math.PI / 2;
@@ -314,7 +358,6 @@
       earR.position.set(0.06, 0.18, 0.02);
       group.add(earL, earR);
 
-      // Little nose
       const nose = new THREE.Mesh(
         new THREE.SphereGeometry(0.015, 8, 8),
         new THREE.MeshStandardMaterial({ color: 0xffaacc })
@@ -338,7 +381,7 @@
 
     function buildUI() {
       scorePanel = new THREE.Group();
-      scorePanel.position.set(0.8, 0.3, -1.0);
+      scorePanel.position.set(0.8, 0.1, -1.0); // Lowered UI slightly too
       scorePanel.rotation.y = -0.3;
       
       const hsMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.2), makeUIMaterial(createTextTex(`🏆 Bedste: ${state.highScore}`, '#ffdd00', '36px')));
@@ -362,29 +405,18 @@
 
     // --- RHYTHM TRACK SYSTEM ---
     function spawnNote() {
-      // 0: Up, 1: Down, 2: Left Twist, 3: Right Twist
       const type = Math.floor(Math.random() * 4);
-      const noteGrp = new THREE.Group();
       
-      // Visual based on type
-      const geo = new THREE.BoxGeometry(0.1, 0.1, 0.05);
-      let color, icon;
-      if(type === 0) { color = 0x88ff88; icon = "⬆️"; } // Up
-      else if(type === 1) { color = 0xff88ff; icon = "⬇️"; } // Down
-      else if(type === 2) { color = 0x88aaff; icon = "⬅️"; } // Left Twist
-      else { color = 0xff8888; icon = "➡️"; } // Right Twist
-
-      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
-      const mesh = new THREE.Mesh(geo, mat);
-      noteGrp.add(mesh);
+      // Flat, unmissable token
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.25), noteMaterials[type]);
       
-      noteGrp.position.set(0, 0, CONSTANTS.spawnZ);
-      noteGrp.userData = { type, active: true };
-      scene.add(noteGrp);
-      notes.push(noteGrp);
+      mesh.position.set(0, CONSTANTS.trackY, CONSTANTS.spawnZ);
+      mesh.userData = { type, active: true };
+      scene.add(mesh);
+      notes.push(mesh);
     }
 
-    // --- CONTROLLER LOGIC (Modified for Gestures) ---
+    // --- CONTROLLER LOGIC ---
     function setupControllers(session) {
       controllers = [renderer.xr.getController(0), renderer.xr.getController(1)];
       controllers.forEach((c, i) => {
@@ -432,7 +464,7 @@
       state.gameStartTime = state.clock.getElapsedTime();
     }
 
-    // --- GESTURE DETECTION ---
+    // --- GESTURE DETECTION & RESPONSIVE MOUSE ANIMATION ---
     function handleGestures() {
       if (!state.activeController || !state.isPlaying || state.isBreak) return;
       
@@ -442,28 +474,22 @@
       const velY = currY - lastCtrlY;
       const velZ = currZ - lastCtrlZ;
 
-      const threshY = 0.012; // Height sensitivity
-      const threshZ = 0.04;  // Twist sensitivity
+      const threshY = 0.012; 
+      const threshZ = 0.04;  
 
-      // Y-Axis (Up/Down)
       if (velY > threshY && !gestureActive.up) { triggerAction(0); gestureActive.up = true; }
       else if (velY < -threshY && !gestureActive.down) { triggerAction(1); gestureActive.down = true; }
-      
       if (Math.abs(velY) < 0.005) { gestureActive.up = false; gestureActive.down = false; }
 
-      // Z-Axis Twist (Left/Right)
       if (velZ > threshZ && !gestureActive.left) { triggerAction(2); gestureActive.left = true; }
       else if (velZ < -threshZ && !gestureActive.right) { triggerAction(3); gestureActive.right = true; }
-      
       if (Math.abs(velZ) < 0.01) { gestureActive.left = false; gestureActive.right = false; }
 
-      // Gradually recenter baselines to adapt to player drifting
       lastCtrlY += (currY - lastCtrlY) * 0.1;
       lastCtrlZ += (currZ - lastCtrlZ) * 0.1;
     }
 
     function triggerAction(actionType) {
-      // Find closest active note
       let closest = null;
       let minDist = 999;
       
@@ -488,28 +514,39 @@
         }
         updateUI();
         
-        // Visual/Audio Feedback
         const sounds = ['score1-sound', 'score2-sound', 'score3-sound'];
         const snd = document.getElementById(sounds[Math.floor(Math.random()*sounds.length)]);
         snd.currentTime = 0; snd.play().catch(()=>{});
         
-        triggerConfetti(closest.position, closest.children[0].material.color.getHex());
+        // Ensure hex fallback if color not immediately readable
+        const colors = [0x4ade80, 0xf472b6, 0x60a5fa, 0xfb923c];
+        triggerConfetti(closest.position, colors[actionType]);
         
-        // Make player mouse dance!
-        playerMouse.position.y = -0.25; // Jump
-        playerMouse.rotation.y = (Math.random() - 0.5) * 2; // Twist
-        setTimeout(() => { playerMouse.position.y = -0.35; playerMouse.rotation.y = 0; }, 150);
+        // MOUSE PERFORMS THE ACTION
+        if (actionType === 0) { // Up = Jump
+          playerMouse.position.y = -0.20; 
+          setTimeout(() => playerMouse.position.y = -0.35, 200);
+        } else if (actionType === 1) { // Down = Squat
+          playerMouse.scale.y = 0.5;
+          setTimeout(() => playerMouse.scale.y = 1.0, 200);
+        } else if (actionType === 2) { // Twist Left
+          playerMouse.rotation.y = 1.0;
+          setTimeout(() => playerMouse.rotation.y = 0, 200);
+        } else if (actionType === 3) { // Twist Right
+          playerMouse.rotation.y = -1.0;
+          setTimeout(() => playerMouse.rotation.y = 0, 200);
+        }
+
         hitRing.material.color.setHex(0x00ff00);
         setTimeout(() => hitRing.material.color.setHex(0xffffff), 100);
       } else {
-        // Missed (wrong gesture, or swung at nothing)
+        // MISS!
         if (closest) {
           state.combo = 0; updateUI();
           document.getElementById('death-sound').play().catch(()=>{});
           hitRing.material.color.setHex(0xff0000);
           setTimeout(() => hitRing.material.color.setHex(0xffffff), 100);
           
-          // Player stumbles
           playerMouse.rotation.z = 0.5;
           setTimeout(() => { playerMouse.rotation.z = 0; }, 200);
         }
@@ -530,7 +567,6 @@
       }
     }
 
-    // --- NXT/Care v1.3 CLAP TO CLOSE (Preserved) ---
     function checkClap() {
       if (controllers.length < 2 || !controllers[0].visible || !controllers[1].visible) { clapStart = 0; return; }
       const c1 = controllers[0], c2 = controllers[1];
@@ -541,7 +577,7 @@
       } else clapStart = 0;
     }
     
-    function buildClapHUD() { /* Identical to original canvas setup */
+    function buildClapHUD() { 
       clapHUD = new THREE.Group();
       const c = document.createElement('canvas'); c.width = 1024; c.height = 220;
       const tex = makeUITexture(c);
@@ -581,14 +617,12 @@
         const gameTime = state.clock.getElapsedTime() - state.gameStartTime;
         const cyclePos = gameTime % state.cycleTime;
         
-        // 0-15s: Active Play, 15-20s: Dance Break
         if (cyclePos > 15) {
           if (!state.isBreak) {
              state.isBreak = true;
              hitRing.visible = false;
-             scorePanel.position.y = 10; // Hide UI
+             scorePanel.position.y = 10; 
           }
-          // Make background mice dance crazy
           bgMice.forEach(m => {
              m.mesh.position.y = -0.35 + Math.abs(Math.sin(time * 0.01 + m.offset)) * 0.15;
              m.mesh.rotation.y += dt * 2.0;
@@ -597,28 +631,24 @@
           if (state.isBreak) {
              state.isBreak = false;
              hitRing.visible = true;
-             scorePanel.position.y = 0.3; // Restore UI
-             bgMice.forEach(m => { m.mesh.position.y = -0.35; }); // Reset
+             scorePanel.position.y = 0.1; 
+             bgMice.forEach(m => { m.mesh.position.y = -0.35; }); 
           }
           
-          // Gentle ambient bop for BG mice
           bgMice.forEach(m => { m.mesh.position.y = -0.35 + Math.sin(time * 0.005 + m.offset) * 0.02; });
 
-          // Spawn notes occasionally
           if (Math.random() < 0.02 * state.trackSpeed) spawnNote();
         }
 
-        // Move notes
         for (let i = notes.length - 1; i >= 0; i--) {
           const n = notes[i];
           n.position.z += state.trackSpeed * dt;
           
-          // Spin notes
-          n.rotation.x += dt; n.rotation.y += dt;
+          // Tokens face user cleanly without spinning to stay readable
+          n.quaternion.copy(camera.quaternion);
 
           if (n.position.z > 0) {
             if (n.userData.active) {
-              // Missed note by letting it pass
               state.combo = 0; updateUI();
               hitRing.material.color.setHex(0xff0000);
               setTimeout(() => hitRing.material.color.setHex(0xffffff), 100);
@@ -629,13 +659,12 @@
         }
       }
 
-      // Update particles
       for (let i = 0; i < particlePool.length; i++) {
         const p = particlePool[i];
         if (p.active) {
           p.mesh.position.add(p.vel);
           p.mesh.rotation.z += p.rot;
-          p.vel.y -= dt * 0.2; // Gravity
+          p.vel.y -= dt * 0.2; 
           p.life -= dt;
           p.mesh.material.opacity = Math.max(0, p.life);
           if (p.life <= 0) { p.active = false; p.mesh.visible = false; }
