@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="da">
+<head>
+  <meta charset="utf-8">
+  <title>Musene Danser - NXT/Care</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <style>
+    :root {
+      /* Warm Ghibli-esque Colors */
+      --sky-100: #fff3e0;
+      --sky-500: #d88c51; 
+      
+      --spring: 0.6s cubic-bezier(0.175, 0.885, 0.32, 1.25);
+      --btn-size: clamp(220px, 35vw, 450px);
+      --icon-size: clamp(128px, 19.2vw, 256px); 
+    }
+
+    * { 
+      margin: 0; 
+      padding: 0; 
+      box-sizing: border-box; 
+      -webkit-tap-highlight-color: transparent; 
+    }
+    
+    body, html {
+      width: 100%; 
+      height: 100%;
+      overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Rounded", "Segoe UI", Roboto, sans-serif;
+      background: var(--sky-100);
+    }
+
+    #overlay {
+      position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+      display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1;
+      background: var(--sky-100);
+    }
+
+    .play-svg {
+      width: var(--icon-size);
+      height: var(--icon-size);
+      fill: currentColor;
+      margin-left: 10%;
+      transition: all var(--spring);
+    }
+
+    .xr-btn {
+      position: relative;
+      cursor: pointer; 
+      outline: none; 
+      border: none;
+      display: flex; 
+      align-items: center; 
+      justify-content: center;
+      text-decoration: none; 
+      user-select: none;
+      transition: all var(--spring);
+      
+      width: calc(var(--btn-size) * 1.2); 
+      height: calc(var(--btn-size) * 1.1);
+      border-radius: 60% 40% 40% 60% / 50% 60% 40% 50%;
+      background: var(--sky-100); 
+      color: var(--sky-500);
+      box-shadow: inset 15px 15px 30px #e6dabf, inset -15px -15px 30px #ffffff;
+    }
+    
+    .xr-btn:hover:not(:disabled) { 
+      border-radius: 50%; 
+      transform: scale(1.05); 
+      background: var(--sky-500); 
+      color: var(--sky-100); 
+      box-shadow: 15px 15px 30px #e6dabf, -15px -15px 30px #ffffff; 
+    }
+
+    .xr-btn:active:not(:disabled) { transform: scale(0.95); }
+    .xr-btn:disabled { opacity: 0.6; cursor: not-allowed; filter: grayscale(0.2); }
+
+    #toast {
+      position: fixed; bottom: -100px; left: 50%; transform: translateX(-50%);
+      background: var(--sky-500); color: white; padding: 16px 32px;
+      border-radius: 50px; font-weight: 600; font-size: 1.1rem;
+      box-shadow: 0 10px 25px rgba(216, 140, 81, 0.4);
+      transition: all 0.4s cubic-bezier(0.175, 0.885, 0.32, 1.25);
+      z-index: 1000; pointer-events: none;
+    }
+    #toast.show { bottom: 60px; }
+
+    .exit-ar {
+      position: fixed; top: 20px; right: 20px; background: rgba(0, 0, 0, 0.25);
+      color: white; border: none; border-radius: 50%; width: 50px; height: 50px;
+      font-size: 24px; cursor: pointer; backdrop-filter: blur(5px); z-index: 1000; display: none;
+    }
+    .xr-active .exit-ar { display: flex; }
+    .webxr-hidden { display: none !important; }
+  </style>
+  <script type="importmap">
+    {
+      "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.150.1/build/three.module.js",
+        "GLTFLoader": "https://cdn.jsdelivr.net/npm/three@0.150.1/examples/jsm/loaders/GLTFLoader.js"
+      }
+    }
+  </script>
+</head>
+<body>
+  
+  <div id="overlay">
+    <svg width="0" height="0" style="position:absolute;">
+      <defs>
+        <g id="icon-play">
+          <path d="M8 5v14l11-7z" stroke-linejoin="round" stroke-linecap="round"/>
+        </g>
+      </defs>
+    </svg>
+    <button class="xr-btn" id="launch-button" aria-label="Start XR Experience">
+      <svg class="play-svg" viewBox="0 0 24 24"><use href="#icon-play"></use></svg>
+    </button>
+  </div>
+  
+  <div id="toast">XR Experience Launched!</div>
+  <button class="exit-ar" id="exit-ar">×</button>
+
+  <audio id="score1-sound" preload="auto" src="score1.mp3"></audio>
+  <audio id="score2-sound" preload="auto" src="score2.mp3"></audio>
+  <audio id="score3-sound" preload="auto" src="score3.mp3"></audio>
+  <audio id="death-sound" preload="auto" src="dead.mp3"></audio> <script type="module">
+    import * as THREE from 'three';
+
+    // --- GAME STATE ---
+    const state = {
+      xrSession: null, isPlaying: false, isControllerSelection: false,
+      score: 0, combo: 0, highScore: parseInt(localStorage.getItem('miceDanceHighScore') || '0', 10),
+      clock: new THREE.Clock(), gameStartTime: 0,
+      selectedCtrlIdx: 0, ctrlHoldStart: {}, activeController: null,
+      cycleTime: 20, // 15s dance, 5s break
+      isBreak: false, trackSpeed: 2.0
+    };
+
+    const CONSTANTS = {
+      selectTime: 4000, holdTime: 3000, clapDist: 0.15, clapTime: 6000,
+      hitZoneZ: -0.6, spawnZ: -4.0, hitTolerance: 0.25
+    };
+
+    // --- GLOBALS ---
+    let camera, scene, renderer, backgroundMusic;
+    let tableGroup, playerMouse, bgMice = [], scorePanel, comboText;
+    let controllers = [], particles = [], particlePool = [];
+    let notes = [], hitRing;
+    let clapStart = 0, clapHUD = null;
+    
+    // Input Gestures
+    let lastCtrlY = 0, lastCtrlZ = 0;
+    let gestureActive = { up: false, down: false, left: false, right: false };
+
+    let isLaunching = false;
+    let toastTimeout;
+
+    // ---------- helpers ----------
+    function makeUITexture(canvas) {
+      const t = new THREE.CanvasTexture(canvas);
+      t.encoding = THREE.sRGBEncoding;
+      t.minFilter = THREE.LinearFilter;
+      t.magFilter = THREE.LinearFilter;
+      return t;
+    }
+    function makeUIMaterial(map) {
+      return new THREE.MeshBasicMaterial({ map, transparent: true, toneMapped: false });
+    }
+
+    init();
+    function init() {
+      scene = new THREE.Scene();
+      scene.fog = new THREE.FogExp2(0x1a1210, 0.1);
+      camera = new THREE.PerspectiveCamera(70, window.innerWidth/window.innerHeight, 0.01, 20);
+      
+      renderer = new THREE.WebGLRenderer({ antialias: true, alpha: true });
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      renderer.xr.enabled = true;
+      renderer.setClearColor(0x000000, 0);
+      renderer.outputEncoding = THREE.sRGBEncoding;
+      document.body.appendChild(renderer.domElement);
+
+      // Warm, cozy lighting
+      scene.add(new THREE.AmbientLight(0xffeacc, 0.4));
+      const candleLight = new THREE.PointLight(0xffaa55, 1.2, 5);
+      candleLight.position.set(0, 0.5, -1);
+      scene.add(candleLight);
+      
+      const rimLight = new THREE.DirectionalLight(0x88aaff, 0.5);
+      rimLight.position.set(-2, 2, -3);
+      scene.add(rimLight);
+
+      // Setup particles
+      const pGeo = new THREE.PlaneGeometry(0.05, 0.05);
+      const pMat = new THREE.MeshBasicMaterial({ color: 0xffdd88, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
+      for (let i = 0; i < 100; i++) {
+        const m = new THREE.Mesh(pGeo, pMat.clone());
+        m.visible = false; scene.add(m);
+        particlePool.push({ mesh: m, active: false, life: 0, vel: new THREE.Vector3(), rot: 0 });
+      }
+
+      const launchBtn = document.getElementById('launch-button');
+      launchBtn.addEventListener('click', () => {
+        if (isLaunching) return;
+        isLaunching = true;
+        const toast = document.getElementById('toast');
+        toast.classList.add('show');
+        clearTimeout(toastTimeout);
+        toastTimeout = setTimeout(() => { toast.classList.remove('show'); isLaunching = false; }, 2000);
+        startAR();
+      });
+
+      // Using same background music variable, replace with rhythmic track later
+      backgroundMusic = new Audio('Gentlelane.mp3');
+      backgroundMusic.loop = true; backgroundMusic.volume = 0.7;
+      document.getElementById('exit-ar').addEventListener('click', endAR);
+    }
+
+    // --- XR SESSION ---
+    async function startAR() {
+      if (!navigator.xr) return;
+      try {
+        const session = await navigator.xr.requestSession('immersive-ar', {
+          requiredFeatures: ['hit-test'], optionalFeatures: ['dom-overlay'], domOverlay: { root: document.body }
+        });
+        document.getElementById('overlay').classList.add('webxr-hidden');
+        document.body.classList.add('xr-active');
+        renderer.xr.setReferenceSpaceType('local');
+        renderer.xr.setSession(session);
+        state.xrSession = session;
+        
+        buildWorld();
+        buildClapHUD();
+        setupControllers(session);
+        
+        renderer.compile(scene, camera);
+        state.isControllerSelection = true;
+        state.gameStartTime = state.clock.getElapsedTime();
+        renderer.setAnimationLoop(render);
+        session.addEventListener('end', endAR);
+      } catch (e) { console.error("XR Error:", e); }
+    }
+    
+    function endAR() {
+      if (state.xrSession) state.xrSession.end();
+      state.isPlaying = state.isControllerSelection = false;
+      document.body.classList.remove('xr-active');
+      document.getElementById('overlay').classList.remove('webxr-hidden');
+      backgroundMusic.pause(); backgroundMusic.currentTime = 0;
+      clearScene();
+      renderer.setAnimationLoop(null);
+      state.xrSession = null;
+    }
+
+    // --- WORLD BUILDING (GHIBLI MICE & TABLE) ---
+    function buildWorld() {
+      tableGroup = new THREE.Group();
+      
+      // The Dark Wooden Table
+      const tableGeo = new THREE.BoxGeometry(4, 0.1, 3);
+      const tableMat = new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.9, metalness: 0.1 });
+      const table = new THREE.Mesh(tableGeo, tableMat);
+      table.position.set(0, -0.4, -1.5);
+      tableGroup.add(table);
+      scene.add(tableGroup);
+
+      // Create Cute Mice
+      playerMouse = createMouse(0xaaaaaa); // Grey player
+      playerMouse.position.set(0, -0.35, -1.2);
+      scene.add(playerMouse);
+
+      // Background dancing mice
+      const bgMouse1 = createMouse(0x8d6e63); // Brown
+      bgMouse1.position.set(-0.6, -0.35, -2.0);
+      bgMouse1.rotation.y = 0.5;
+      scene.add(bgMouse1);
+      bgMice.push({ mesh: bgMouse1, offset: 0 });
+
+      const bgMouse2 = createMouse(0xefeed4); // White/Cream
+      bgMouse2.position.set(0.6, -0.35, -1.8);
+      bgMouse2.rotation.y = -0.5;
+      scene.add(bgMouse2);
+      bgMice.push({ mesh: bgMouse2, offset: Math.PI });
+
+      // Hit Ring for rhythm game
+      hitRing = new THREE.Mesh(
+        new THREE.RingGeometry(0.18, 0.2, 32),
+        new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
+      );
+      hitRing.position.set(0, 0, CONSTANTS.hitZoneZ);
+      scene.add(hitRing);
+
+      buildUI();
+    }
+
+    function createMouse(colorHex) {
+      const group = new THREE.Group();
+      
+      // Body (Drop shape approximated with Capsule)
+      const body = new THREE.Mesh(
+        new THREE.CapsuleGeometry(0.08, 0.08, 8, 16),
+        new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.8 })
+      );
+      body.position.y = 0.1;
+      group.add(body);
+
+      // Big round ears
+      const earMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 1.0 });
+      const earL = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.05, 0.01, 16), earMat);
+      earL.rotation.x = Math.PI / 2;
+      earL.position.set(-0.06, 0.18, 0.02);
+      
+      const earR = earL.clone();
+      earR.position.set(0.06, 0.18, 0.02);
+      group.add(earL, earR);
+
+      // Little nose
+      const nose = new THREE.Mesh(
+        new THREE.SphereGeometry(0.015, 8, 8),
+        new THREE.MeshStandardMaterial({ color: 0xffaacc })
+      );
+      nose.position.set(0, 0.12, 0.09);
+      group.add(nose);
+
+      return group;
+    }
+
+    // --- UI SYSTEM ---
+    function createTextTex(text, color, size="42px") {
+      const cvs = document.createElement('canvas'); cvs.width = 512; cvs.height = 128;
+      const ctx = cvs.getContext('2d');
+      ctx.fillStyle = 'rgba(62, 39, 35, 0.8)'; ctx.fillRect(0,0,cvs.width,cvs.height);
+      ctx.strokeStyle = 'rgba(255,255,255,0.3)'; ctx.lineWidth = 4; ctx.strokeRect(2,2,cvs.width-4,cvs.height-4);
+      ctx.fillStyle = color; ctx.font = `bold ${size} "SF Pro Rounded", Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(text, cvs.width/2, cvs.height/2);
+      return makeUITexture(cvs);
+    }
+
+    function buildUI() {
+      scorePanel = new THREE.Group();
+      scorePanel.position.set(0.8, 0.3, -1.0);
+      scorePanel.rotation.y = -0.3;
+      
+      const hsMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.2), makeUIMaterial(createTextTex(`🏆 Bedste: ${state.highScore}`, '#ffdd00', '36px')));
+      hsMesh.position.y = 0.25; hsMesh.name = "hs"; scorePanel.add(hsMesh);
+      
+      const scMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.2), makeUIMaterial(createTextTex(`🎵 Point: 0`, '#88ff88', '42px')));
+      scMesh.name = "sc"; scorePanel.add(scMesh);
+
+      comboText = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.2), makeUIMaterial(createTextTex(`Combo: 0`, '#ffaa00', '36px')));
+      comboText.position.y = -0.25; scorePanel.add(comboText);
+
+      scene.add(scorePanel);
+    }
+
+    function updateUI() {
+      const swap = (mesh, tex) => { if (mesh.material.map) mesh.material.map.dispose(); mesh.material.map = tex; mesh.material.needsUpdate = true; };
+      swap(scorePanel.getObjectByName("hs"), createTextTex(`🏆 Bedste: ${state.highScore}`, '#ffdd00', '36px'));
+      swap(scorePanel.getObjectByName("sc"), createTextTex(`🎵 Point: ${state.score}`, '#88ff88', '42px'));
+      swap(comboText, createTextTex(`Combo: ${state.combo}`, state.combo > 5 ? '#ff4444' : '#ffaa00', '36px'));
+    }
+
+    // --- RHYTHM TRACK SYSTEM ---
+    function spawnNote() {
+      // 0: Up, 1: Down, 2: Left Twist, 3: Right Twist
+      const type = Math.floor(Math.random() * 4);
+      const noteGrp = new THREE.Group();
+      
+      // Visual based on type
+      const geo = new THREE.BoxGeometry(0.1, 0.1, 0.05);
+      let color, icon;
+      if(type === 0) { color = 0x88ff88; icon = "⬆️"; } // Up
+      else if(type === 1) { color = 0xff88ff; icon = "⬇️"; } // Down
+      else if(type === 2) { color = 0x88aaff; icon = "⬅️"; } // Left Twist
+      else { color = 0xff8888; icon = "➡️"; } // Right Twist
+
+      const mat = new THREE.MeshBasicMaterial({ color, transparent: true, opacity: 0.9 });
+      const mesh = new THREE.Mesh(geo, mat);
+      noteGrp.add(mesh);
+      
+      noteGrp.position.set(0, 0, CONSTANTS.spawnZ);
+      noteGrp.userData = { type, active: true };
+      scene.add(noteGrp);
+      notes.push(noteGrp);
+    }
+
+    // --- CONTROLLER LOGIC (Modified for Gestures) ---
+    function setupControllers(session) {
+      controllers = [renderer.xr.getController(0), renderer.xr.getController(1)];
+      controllers.forEach((c, i) => {
+        scene.add(c);
+        c.addEventListener('selectstart', () => { state.ctrlPressStart = Date.now(); });
+        c.addEventListener('selectend', () => {
+          if (Date.now() - state.ctrlPressStart >= 3000) {
+            state.selectedCtrlIdx = state.selectedCtrlIdx === 0 ? 1 : 0;
+            state.activeController = controllers[state.selectedCtrlIdx];
+            triggerConfetti(state.activeController.position);
+          }
+        });
+      });
+    }
+
+    function processControllerSelection() {
+      if (!state.isControllerSelection) return;
+      const elapsed = (state.clock.getElapsedTime() - state.gameStartTime) * 1000;
+      let highestY = -999, highestIdx = -1;
+      controllers.forEach((c, i) => { if (c.visible && c.position.y > highestY) { highestY = c.position.y; highestIdx = i; } });
+      if (highestIdx >= 0) {
+        const c = controllers[highestIdx];
+        const isInFront = c.position.z > -0.8 && c.position.z < -0.3 && Math.abs(c.position.x) < 0.3;
+        if (isInFront) {
+          if (!state.ctrlHoldStart[highestIdx]) state.ctrlHoldStart[highestIdx] = state.clock.getElapsedTime();
+          if ((state.clock.getElapsedTime() - state.ctrlHoldStart[highestIdx]) * 1000 >= CONSTANTS.holdTime) {
+            confirmController(highestIdx); return;
+          }
+        } else state.ctrlHoldStart[highestIdx] = null;
+      }
+      if (elapsed > CONSTANTS.selectTime) confirmController(Math.max(0, highestIdx));
+    }
+
+    function confirmController(idx) {
+      state.isControllerSelection = false;
+      state.selectedCtrlIdx = idx;
+      state.activeController = controllers[idx];
+      lastCtrlY = state.activeController.position.y;
+      lastCtrlZ = state.activeController.rotation.z;
+      
+      triggerConfetti(state.activeController.position);
+      document.getElementById('score3-sound').play().catch(() => {});
+      backgroundMusic.play().catch(() => {});
+      state.isPlaying = true;
+      state.gameStartTime = state.clock.getElapsedTime();
+    }
+
+    // --- GESTURE DETECTION ---
+    function handleGestures() {
+      if (!state.activeController || !state.isPlaying || state.isBreak) return;
+      
+      const currY = state.activeController.position.y;
+      const currZ = state.activeController.rotation.z;
+
+      const velY = currY - lastCtrlY;
+      const velZ = currZ - lastCtrlZ;
+
+      const threshY = 0.012; // Height sensitivity
+      const threshZ = 0.04;  // Twist sensitivity
+
+      // Y-Axis (Up/Down)
+      if (velY > threshY && !gestureActive.up) { triggerAction(0); gestureActive.up = true; }
+      else if (velY < -threshY && !gestureActive.down) { triggerAction(1); gestureActive.down = true; }
+      
+      if (Math.abs(velY) < 0.005) { gestureActive.up = false; gestureActive.down = false; }
+
+      // Z-Axis Twist (Left/Right)
+      if (velZ > threshZ && !gestureActive.left) { triggerAction(2); gestureActive.left = true; }
+      else if (velZ < -threshZ && !gestureActive.right) { triggerAction(3); gestureActive.right = true; }
+      
+      if (Math.abs(velZ) < 0.01) { gestureActive.left = false; gestureActive.right = false; }
+
+      // Gradually recenter baselines to adapt to player drifting
+      lastCtrlY += (currY - lastCtrlY) * 0.1;
+      lastCtrlZ += (currZ - lastCtrlZ) * 0.1;
+    }
+
+    function triggerAction(actionType) {
+      // Find closest active note
+      let closest = null;
+      let minDist = 999;
+      
+      notes.forEach(note => {
+        if (!note.userData.active) return;
+        const dist = Math.abs(note.position.z - CONSTANTS.hitZoneZ);
+        if (dist < minDist && dist < CONSTANTS.hitTolerance) {
+          minDist = dist;
+          closest = note;
+        }
+      });
+
+      if (closest && closest.userData.type === actionType) {
+        // HIT!
+        closest.userData.active = false;
+        closest.visible = false;
+        state.combo++;
+        state.score += 10 + (state.combo * 2);
+        if (state.score > state.highScore) {
+          state.highScore = state.score;
+          localStorage.setItem('miceDanceHighScore', state.highScore.toString());
+        }
+        updateUI();
+        
+        // Visual/Audio Feedback
+        const sounds = ['score1-sound', 'score2-sound', 'score3-sound'];
+        const snd = document.getElementById(sounds[Math.floor(Math.random()*sounds.length)]);
+        snd.currentTime = 0; snd.play().catch(()=>{});
+        
+        triggerConfetti(closest.position, closest.children[0].material.color.getHex());
+        
+        // Make player mouse dance!
+        playerMouse.position.y = -0.25; // Jump
+        playerMouse.rotation.y = (Math.random() - 0.5) * 2; // Twist
+        setTimeout(() => { playerMouse.position.y = -0.35; playerMouse.rotation.y = 0; }, 150);
+        hitRing.material.color.setHex(0x00ff00);
+        setTimeout(() => hitRing.material.color.setHex(0xffffff), 100);
+      } else {
+        // Missed (wrong gesture, or swung at nothing)
+        if (closest) {
+          state.combo = 0; updateUI();
+          document.getElementById('death-sound').play().catch(()=>{});
+          hitRing.material.color.setHex(0xff0000);
+          setTimeout(() => hitRing.material.color.setHex(0xffffff), 100);
+          
+          // Player stumbles
+          playerMouse.rotation.z = 0.5;
+          setTimeout(() => { playerMouse.rotation.z = 0; }, 200);
+        }
+      }
+    }
+
+    // --- EFFECTS ---
+    function triggerConfetti(pos, hexColor = 0xffffff) {
+      for (let i = 0; i < 15; i++) {
+        const p = particlePool.find(x => !x.active);
+        if (!p) continue;
+        p.active = true; p.life = 0.8 + Math.random()*0.4;
+        p.vel.set((Math.random()-.5)*.1, Math.random()*.1+.05, (Math.random()-.5)*.1);
+        p.mesh.position.copy(pos);
+        p.mesh.material.color.setHex(hexColor);
+        p.rot = (Math.random() - 0.5) * 0.2;
+        p.mesh.visible = true;
+      }
+    }
+
+    // --- NXT/Care v1.3 CLAP TO CLOSE (Preserved) ---
+    function checkClap() {
+      if (controllers.length < 2 || !controllers[0].visible || !controllers[1].visible) { clapStart = 0; return; }
+      const c1 = controllers[0], c2 = controllers[1];
+      if (c1.position.lengthSq() === 0 && c2.position.lengthSq() === 0) { clapStart = 0; return; }
+      if (c1.position.distanceTo(c2.position) <= CONSTANTS.clapDist) {
+        if (!clapStart) clapStart = Date.now();
+        else if (Date.now() - clapStart >= CONSTANTS.clapTime) { clapStart = 0; endAR(); }
+      } else clapStart = 0;
+    }
+    
+    function buildClapHUD() { /* Identical to original canvas setup */
+      clapHUD = new THREE.Group();
+      const c = document.createElement('canvas'); c.width = 1024; c.height = 220;
+      const tex = makeUITexture(c);
+      const mesh = new THREE.Mesh(new THREE.PlaneGeometry(0.7, 0.15), new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthTest: false }));
+      mesh.renderOrder = 999; clapHUD.add(mesh);
+      clapHUD.userData = { canvas: c, ctx: c.getContext('2d'), tex }; clapHUD.visible = false; scene.add(clapHUD);
+    }
+    
+    function drawClapHUD() {
+      if (!clapHUD) return;
+      clapHUD.visible = clapStart > 0;
+      if (!clapHUD.visible) return;
+      const xrCam = renderer.xr.getCamera();
+      clapHUD.position.copy(xrCam.position); clapHUD.quaternion.copy(xrCam.quaternion);
+      clapHUD.translateZ(-0.9); clapHUD.translateY(0.15);
+      const { ctx, tex } = clapHUD.userData;
+      ctx.clearRect(0,0,1024,220); ctx.fillStyle = 'rgba(255,255,255,0.9)'; ctx.fillRect(10,10,1004,200);
+      const elapsed = Date.now() - clapStart;
+      const remain = Math.max(0, Math.ceil((CONSTANTS.clapTime - elapsed) / 1000));
+      ctx.fillStyle = '#000'; ctx.font = '60px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+      ctx.fillText(`👏 Hold for at lukke: ${remain}s`, 512, 110);
+      tex.needsUpdate = true;
+    }
+
+    // --- GAME LOOP ---
+    function render(time, frame) {
+      const dt = Math.min(state.clock.getDelta(), 1/30);
+      if (!frame) return;
+      
+      if (state.isControllerSelection) processControllerSelection();
+      else checkClap();
+      drawClapHUD();
+
+      if (state.isPlaying && !state.isControllerSelection) {
+        handleGestures();
+
+        const gameTime = state.clock.getElapsedTime() - state.gameStartTime;
+        const cyclePos = gameTime % state.cycleTime;
+        
+        // 0-15s: Active Play, 15-20s: Dance Break
+        if (cyclePos > 15) {
+          if (!state.isBreak) {
+             state.isBreak = true;
+             hitRing.visible = false;
+             scorePanel.position.y = 10; // Hide UI
+          }
+          // Make background mice dance crazy
+          bgMice.forEach(m => {
+             m.mesh.position.y = -0.35 + Math.abs(Math.sin(time * 0.01 + m.offset)) * 0.15;
+             m.mesh.rotation.y += dt * 2.0;
+          });
+        } else {
+          if (state.isBreak) {
+             state.isBreak = false;
+             hitRing.visible = true;
+             scorePanel.position.y = 0.3; // Restore UI
+             bgMice.forEach(m => { m.mesh.position.y = -0.35; }); // Reset
+          }
+          
+          // Gentle ambient bop for BG mice
+          bgMice.forEach(m => { m.mesh.position.y = -0.35 + Math.sin(time * 0.005 + m.offset) * 0.02; });
+
+          // Spawn notes occasionally
+          if (Math.random() < 0.02 * state.trackSpeed) spawnNote();
+        }
+
+        // Move notes
+        for (let i = notes.length - 1; i >= 0; i--) {
+          const n = notes[i];
+          n.position.z += state.trackSpeed * dt;
+          
+          // Spin notes
+          n.rotation.x += dt; n.rotation.y += dt;
+
+          if (n.position.z > 0) {
+            if (n.userData.active) {
+              // Missed note by letting it pass
+              state.combo = 0; updateUI();
+              hitRing.material.color.setHex(0xff0000);
+              setTimeout(() => hitRing.material.color.setHex(0xffffff), 100);
+            }
+            scene.remove(n);
+            notes.splice(i, 1);
+          }
+        }
+      }
+
+      // Update particles
+      for (let i = 0; i < particlePool.length; i++) {
+        const p = particlePool[i];
+        if (p.active) {
+          p.mesh.position.add(p.vel);
+          p.mesh.rotation.z += p.rot;
+          p.vel.y -= dt * 0.2; // Gravity
+          p.life -= dt;
+          p.mesh.material.opacity = Math.max(0, p.life);
+          if (p.life <= 0) { p.active = false; p.mesh.visible = false; }
+        }
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    function clearScene() {
+      [tableGroup, playerMouse, scorePanel, clapHUD, hitRing].forEach(o => { if (o) scene.remove(o); });
+      bgMice.forEach(m => scene.remove(m.mesh)); bgMice = [];
+      notes.forEach(n => scene.remove(n)); notes = [];
+      particlePool.forEach(p => { p.active = false; p.mesh.visible = false; });
+      clapStart = 0; clapHUD = null;
+    }
+  </script>
+</body>
+</html>
