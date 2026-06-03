@@ -2,7 +2,7 @@
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <title>Musene Danser - NXT/Care (Take 9 - Derpy Husmus)</title>
+  <title>Musene Danser - NXT/Care (Take 10 - Cozy Table)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
     :root {
@@ -14,7 +14,7 @@
       --btn-size: clamp(220px, 35vw, 450px);
       --icon-size: clamp(128px, 19.2vw, 256px); 
     }
-
+ 
     * { margin: 0; padding: 0; box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
     
     body, html {
@@ -22,18 +22,18 @@
       font-family: -apple-system, BlinkMacSystemFont, "SF Pro Rounded", "Segoe UI", Roboto, sans-serif;
       background: var(--sky-100);
     }
-
+ 
     #overlay {
       position: absolute; top: 0; left: 0; width: 100%; height: 100%;
       display: flex; flex-direction: column; align-items: center; justify-content: center; z-index: 1;
       background: var(--sky-100);
     }
-
+ 
     .play-svg {
       width: var(--icon-size); height: var(--icon-size);
       fill: currentColor; margin-left: 10%; transition: all var(--spring);
     }
-
+ 
     .xr-btn {
       position: relative; cursor: pointer; outline: none; border: none;
       display: flex; align-items: center; justify-content: center;
@@ -49,10 +49,10 @@
       background: var(--sky-500); color: var(--sky-100); 
       box-shadow: 15px 15px 30px #e6dabf, -15px -15px 30px #ffffff; 
     }
-
+ 
     .xr-btn:active:not(:disabled) { transform: scale(0.95); }
     .xr-btn:disabled { opacity: 0.6; cursor: not-allowed; filter: grayscale(0.2); }
-
+ 
     #toast {
       position: fixed; bottom: -100px; left: 50%; transform: translateX(-50%);
       background: var(--sky-500); color: white; padding: 16px 32px;
@@ -62,7 +62,7 @@
       z-index: 1000; pointer-events: none;
     }
     #toast.show { bottom: 60px; }
-
+ 
     .exit-ar {
       position: fixed; top: 20px; right: 20px; background: rgba(0, 0, 0, 0.25);
       color: white; border: none; border-radius: 50%; width: 50px; height: 50px;
@@ -92,17 +92,17 @@
   
   <div id="toast">XR Experience Launched!</div>
   <button class="exit-ar" id="exit-ar">×</button>
-
+ 
   <script type="module">
     import * as THREE from 'three';
-
+ 
     // --- AUDIO SYNTHESIZER ---
     let audioCtx;
     function initSynth() {
       if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
       if (audioCtx.state === 'suspended') audioCtx.resume();
     }
-
+ 
     function playSynth(type) {
       if (!audioCtx) return;
       const osc = audioCtx.createOscillator();
@@ -130,7 +130,7 @@
       }
       // Note: 'miss' sound intentionally removed for a gentler experience!
     }
-
+ 
     // --- GAME STATE ---
     const state = {
       xrSession: null, isPlaying: false, isControllerSelection: false,
@@ -142,7 +142,7 @@
       lastSpawn: 0, spawnInterval: 2.5,
       gestureCooldown: 0 
     };
-
+ 
     const CONSTANTS = {
       selectTime: 4000, holdTime: 3000, clapDist: 0.15, clapTime: 6000,
       trackX: 0.4, 
@@ -150,15 +150,16 @@
       hitZoneZ: -0.6, spawnZ: -4.0, 
       hitTolerance: 0.35 // Massively increased tolerance
     };
-
+ 
     // Single source of truth for where a mouse rests on the table.
     // The Derpy model's body base sits at local y=0 (the old model was at y=-0.02),
     // so -0.35 places the new mice in the EXACT same world space as the originals.
     const MOUSE_BASE_Y = -0.35;
-
+ 
     // --- GLOBALS ---
     let camera, scene, renderer, backgroundMusic;
     let tableGroup, playerMouse, bgMice = [], scorePanel, comboText;
+    const worldRefs = {}; // Holds animated candle/vapor refs for the table scene
     let controllers = [], particles = [], particlePool = [];
     let notes = [], hitRing;
     let noteMaterials = [];
@@ -167,11 +168,11 @@
     // Animation Targets
     const pTarget = { y: MOUSE_BASE_Y, rotY: 0, rotZ: 0, scaleY: 1.0 };
     const ringColorTarget = new THREE.Color(0xffffff);
-
+ 
     // Gesture Tracking Variables
     const lastCtrl = { x: 0, y: 0, z: 0, rotZ: 0 };
     let isLaunching = false, toastTimeout;
-
+ 
     // --- DERPY HUSMUS CONFIGS ---
     // Configuration for "Derpy Husmus (Fjollet)"
     const derpyMouseConfig = {
@@ -192,13 +193,13 @@
       eyeScale: 1.2,        // Slightly oversized eyes
       eyeSpacing: 0.045     // Wide-set eyes for that perfect derp look
     };
-
+ 
     // Two background dancers — same derpy species, distinguishable fur.
     const derpyBrownConfig = { ...derpyMouseConfig,
       bodyColor: 0x8d6e63, earColor: 0x8d6e63, bellyColor: 0xc7b0a3 };
     const derpyCreamConfig = { ...derpyMouseConfig,
       bodyColor: 0xece6d4, earColor: 0xece6d4, bellyColor: 0xfaf6ea, innerEarColor: 0xe0b8b8 };
-
+ 
     // ---------- helpers ----------
     function makeUITexture(canvas) {
       const t = new THREE.CanvasTexture(canvas);
@@ -208,7 +209,7 @@
     function makeUIMaterial(map) {
       return new THREE.MeshBasicMaterial({ map, transparent: true, toneMapped: false });
     }
-
+ 
     init();
     function init() {
       scene = new THREE.Scene();
@@ -221,28 +222,28 @@
       renderer.setClearColor(0x000000, 0);
       renderer.outputEncoding = THREE.sRGBEncoding;
       document.body.appendChild(renderer.domElement);
-
+ 
       scene.add(new THREE.AmbientLight(0xffeacc, 0.4));
       const candleLight = new THREE.PointLight(0xffaa55, 1.2, 5);
       candleLight.position.set(0, 0.5, -1); scene.add(candleLight);
       
       const rimLight = new THREE.DirectionalLight(0x88aaff, 0.5);
       rimLight.position.set(-2, 2, -3); scene.add(rimLight);
-
+ 
       const pGeo = new THREE.PlaneGeometry(0.05, 0.05);
       const pMat = new THREE.MeshBasicMaterial({ color: 0xffdd88, transparent: true, opacity: 0.8, side: THREE.DoubleSide });
       for (let i = 0; i < 100; i++) {
         const m = new THREE.Mesh(pGeo, pMat.clone()); m.visible = false; scene.add(m);
         particlePool.push({ mesh: m, active: false, life: 0, vel: new THREE.Vector3(), rot: 0 });
       }
-
+ 
       generateNoteTextures();
-
+ 
       // Audio setup - Only the background music requires an external file
       backgroundMusic = new Audio('Musmusik.mp3');
       backgroundMusic.loop = true; 
       backgroundMusic.volume = 0.7;
-
+ 
       const launchBtn = document.getElementById('launch-button');
       launchBtn.addEventListener('click', () => {
         if (isLaunching) return;
@@ -252,24 +253,24 @@
         
         // Starts background music IMMEDIATELY upon clicking the launch button
         backgroundMusic.play().catch(err => console.warn("Audio unlock pending interaction", err));
-
+ 
         const toast = document.getElementById('toast');
         toast.classList.add('show');
         clearTimeout(toastTimeout);
         toastTimeout = setTimeout(() => { toast.classList.remove('show'); isLaunching = false; }, 2000);
         startAR();
       });
-
+ 
       document.getElementById('exit-ar').addEventListener('click', endAR);
     }
-
+ 
     // 6 distinct gesture blocks
     function generateNoteTextures() {
       const colors = ['#4ade80', '#f472b6', '#60a5fa', '#fb923c', '#a855f7', '#eab308']; 
       for (let i = 0; i < 6; i++) {
         const cvs = document.createElement('canvas'); cvs.width = 256; cvs.height = 256;
         const ctx = cvs.getContext('2d'); const w = cvs.width, h = cvs.height;
-
+ 
         ctx.fillStyle = colors[i];
         ctx.beginPath(); ctx.arc(w/2, h/2, w/2 - 10, 0, Math.PI*2); ctx.fill();
         ctx.lineWidth = 12; ctx.strokeStyle = 'white'; ctx.stroke();
@@ -299,7 +300,7 @@
         noteMaterials.push(new THREE.MeshBasicMaterial({ map: makeUITexture(cvs), transparent: true, opacity: 0.95 }));
       }
     }
-
+ 
     async function startAR() {
       if (!navigator.xr) return;
       try {
@@ -322,35 +323,193 @@
       backgroundMusic.pause(); backgroundMusic.currentTime = 0;
       clearScene(); renderer.setAnimationLoop(null); state.xrSession = null;
     }
-
+ 
     function buildWorld() {
-      tableGroup = new THREE.Group();
-      const tableGeo = new THREE.BoxGeometry(2.2, 0.1, 1.5);
-      const tableMat = new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.9, metalness: 0.1 });
-      const table = new THREE.Mesh(tableGeo, tableMat);
-      table.position.set(0, -0.4, -1.2); tableGroup.add(table); scene.add(tableGroup);
-
+      // Table + Royal Copenhagen teacup + giant candle live in their own cohesive builder.
+      tableGroup = buildTableScene(scene, worldRefs);
+ 
       playerMouse = createAdvancedMouse(derpyMouseConfig); 
       playerMouse.position.set(0, MOUSE_BASE_Y, -1.2); scene.add(playerMouse);
-
+ 
       const bgMouse1 = createAdvancedMouse(derpyBrownConfig); 
       bgMouse1.position.set(-0.5, MOUSE_BASE_Y, -1.5); bgMouse1.rotation.y = 0.3;
       scene.add(bgMouse1); bgMice.push({ mesh: bgMouse1, offset: 0, baseX: -0.5 });
-
+ 
       const bgMouse2 = createAdvancedMouse(derpyCreamConfig); 
       bgMouse2.position.set(0.5, MOUSE_BASE_Y, -1.4); bgMouse2.rotation.y = -0.3;
       scene.add(bgMouse2); bgMice.push({ mesh: bgMouse2, offset: Math.PI, baseX: 0.5 });
-
+ 
       hitRing = new THREE.Mesh(
         new THREE.RingGeometry(0.13, 0.16, 32),
         new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
       );
       hitRing.position.set(CONSTANTS.trackX, CONSTANTS.trackY, CONSTANTS.hitZoneZ);
       scene.add(hitRing);
-
+ 
       buildUI();
     }
-
+ 
+    /**
+     * Builds the dining-table assembly: rustic table + legs, Royal Copenhagen
+     * teacup (with rising steam) and a giant candle (with its own warm light).
+     * Returns the tableGroup so the orchestrator can track it for teardown.
+     * @param {THREE.Scene} scene
+     * @param {Object} refs - stores animated candle/vapor references
+     * @returns {THREE.Group}
+     */
+    function buildTableScene(scene, refs = {}) {
+      refs.animatedCandles = refs.animatedCandles || [];
+      refs.animatedVapors = refs.animatedVapors || [];
+ 
+      const tableGroup = new THREE.Group();
+ 
+      // 1. Table Top (H.C. Andersen meets Ghibli warm rustic wood)
+      const tableGeo = new THREE.BoxGeometry(2.2, 0.1, 1.5);
+      const tableMat = new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.9, metalness: 0.1 });
+      const table = new THREE.Mesh(tableGeo, tableMat);
+      table.position.set(0, -0.4, -1.2);
+      tableGroup.add(table);
+ 
+      // Table Legs (anchor the scene visually)
+      const legGeo = new THREE.BoxGeometry(0.12, 0.8, 0.12);
+      const legPositions = [
+        [-1.0, -0.85, -0.55], [1.0, -0.85, -0.55],
+        [-1.0, -0.85, -1.85], [1.0, -0.85, -1.85]
+      ];
+      legPositions.forEach(pos => {
+        const leg = new THREE.Mesh(legGeo, tableMat);
+        leg.position.set(...pos);
+        tableGroup.add(leg);
+      });
+ 
+      // 2. The Royal Copenhagen Teacup (Blue Fluted)
+      const cupGroup = new THREE.Group();
+      const topR = 0.13, botR = 0.07, footR = 0.06, height = 0.18, footHeight = 0.02, segs = 32;
+ 
+      const pMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1 });   // porcelain
+      const bMat = new THREE.MeshBasicMaterial({ color: 0x0033a0, side: THREE.DoubleSide }); // RC Blue
+      const tMat = new THREE.MeshStandardMaterial({ color: 0x3a1f04, roughness: 0.1 });    // tea liquid
+ 
+      const foot = new THREE.Mesh(new THREE.CylinderGeometry(footR, footR * 0.9, footHeight, segs, 1, false), pMat);
+      foot.position.y = footHeight / 2;
+      cupGroup.add(foot);
+ 
+      const body = new THREE.Mesh(new THREE.CylinderGeometry(topR, botR, height, segs, 1, false), pMat);
+      body.position.y = footHeight + (height / 2);
+      cupGroup.add(body);
+ 
+      // Swept "ear" handle via CatmullRomCurve3
+      const handlePts = [
+        new THREE.Vector3(-topR * 0.95, height * 0.85 + footHeight, 0),
+        new THREE.Vector3(-topR * 1.5, height * 0.9 + footHeight, 0),
+        new THREE.Vector3(-topR * 1.6, height * 0.4 + footHeight, 0),
+        new THREE.Vector3(-botR * 1.4, height * 0.25 + footHeight, 0),
+        new THREE.Vector3(-botR * 0.95, height * 0.2 + footHeight, 0)
+      ];
+      const handleGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(handlePts), 24, 0.012, 8, false);
+      cupGroup.add(new THREE.Mesh(handleGeo, pMat));
+ 
+      // Slip-cast attachment knobs
+      const knobGeo = new THREE.SphereGeometry(0.012 * 1.5, 8, 8);
+      const kTop = new THREE.Mesh(knobGeo, pMat); kTop.position.copy(handlePts[0]);
+      const kBot = new THREE.Mesh(knobGeo, pMat); kBot.position.copy(handlePts[handlePts.length - 1]);
+      cupGroup.add(kTop, kBot);
+ 
+      // Glazed blue rim lines
+      [{ radius: topR + 0.001, y: footHeight + height - 0.01 },
+       { radius: topR + 0.001, y: footHeight + height - 0.03 }].forEach(r => {
+        const rimMesh = new THREE.Mesh(new THREE.CylinderGeometry(r.radius, r.radius, 0.006, segs, 1, true), bMat);
+        rimMesh.position.y = r.y;
+        cupGroup.add(rimMesh);
+      });
+ 
+      // Tea liquid
+      const teaY = footHeight + height * 0.85;
+      const teaR = topR * 0.92;
+      const tea = new THREE.Mesh(new THREE.CylinderGeometry(teaR, teaR, 0.05, segs), tMat);
+      tea.position.y = teaY;
+      cupGroup.add(tea);
+ 
+      // Rising steam vapor
+      const vaporGroup = new THREE.Group();
+      vaporGroup.position.y = teaY + 0.02;
+      for (let i = 0; i < 3; i++) {
+        const v = new THREE.Mesh(
+          new THREE.SphereGeometry(0.025, 8, 8),
+          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 })
+        );
+        v.position.set((Math.random() - 0.5) * 0.06, Math.random() * 0.15, (Math.random() - 0.5) * 0.06);
+        v.userData = { speed: 0.4 + Math.random() * 0.4, baseY: v.position.y };
+        vaporGroup.add(v);
+      }
+      cupGroup.add(vaporGroup);
+      refs.animatedVapors.push(vaporGroup);
+ 
+      cupGroup.position.set(-0.8, -0.35, -1.2); // out of the rhythm track
+      cupGroup.rotation.y = 0.5;
+      tableGroup.add(cupGroup);
+ 
+      // 3. Giant Candle (localized atmospheric light)
+      const candleGroup = new THREE.Group();
+      const cBase = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.06, 0.06, 0.4, 32),
+        new THREE.MeshStandardMaterial({ color: 0xfffdd0, roughness: 0.7 })
+      );
+      cBase.position.y = 0.2; candleGroup.add(cBase);
+ 
+      const cFlame = new THREE.Mesh(
+        new THREE.ConeGeometry(0.02, 0.06, 16),
+        new THREE.MeshBasicMaterial({ color: 0xff9900 })
+      );
+      cFlame.position.y = 0.43; candleGroup.add(cFlame);
+ 
+      const cPlate = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.12, 0.1, 0.02, 32),
+        new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.2 })
+      );
+      cPlate.position.y = 0.01; candleGroup.add(cPlate);
+ 
+      const cLight = new THREE.PointLight(0xffaa55, 1.5, 3);
+      cLight.position.y = 0.45; candleGroup.add(cLight);
+ 
+      candleGroup.position.set(0.9, -0.35, -1.6); // out of the rhythm track
+      tableGroup.add(candleGroup);
+      refs.animatedCandles.push({ flame: cFlame, light: cLight });
+ 
+      scene.add(tableGroup);
+      return tableGroup;
+    }
+ 
+    /**
+     * Per-frame animation for the table set: flickering candle + rising steam.
+     * @param {number} time - elapsed seconds (state.clock.elapsedTime)
+     * @param {number} dt
+     * @param {Object} refs
+     */
+    function animateTableScene(time, dt, refs) {
+      if (refs.animatedCandles) {
+        refs.animatedCandles.forEach(c => {
+          c.flame.scale.y = 1 + Math.sin(time * 15) * 0.1;
+          c.flame.scale.x = 1 + Math.cos(time * 12) * 0.05;
+          c.light.intensity = 1.5 + Math.sin(time * 20) * 0.15 + (Math.random() - 0.5) * 0.05;
+        });
+      }
+      if (refs.animatedVapors) {
+        refs.animatedVapors.forEach(vg => {
+          vg.children.forEach(v => {
+            v.position.y += 0.004 * v.userData.speed;
+            v.material.opacity = 0.35 * (1 - (v.position.y / 0.5));
+            if (v.position.y > 0.4) {
+              v.position.y = v.userData.baseY;
+              v.position.x = (Math.random() - 0.5) * 0.06;
+              v.position.z = (Math.random() - 0.5) * 0.06;
+              v.material.opacity = 0.35;
+            }
+          });
+        });
+      }
+    }
+ 
     /**
      * Advanced Mouse Generator optimized for Meta Quest 3 (Low Poly, High Detail).
      * Replaces the old `createCuteMouse` function. Uses the module-scope THREE.
@@ -359,7 +518,7 @@
      */
     function createAdvancedMouse(config) {
       const group = new THREE.Group();
-
+ 
       // Materials Cache - Reused to save memory draw calls on Quest 3
       const matBody = new THREE.MeshStandardMaterial({ color: config.bodyColor, roughness: 0.8 });
       const matBelly = new THREE.MeshStandardMaterial({ color: config.bellyColor, roughness: 0.9 });
@@ -368,7 +527,7 @@
       const matNose = new THREE.MeshStandardMaterial({ color: config.noseColor, roughness: 0.4 });
       const matEye = new THREE.MeshBasicMaterial({ color: 0x111111 });
       const matHighlight = new THREE.MeshBasicMaterial({ color: 0xffffff });
-
+ 
       // 1. Body & Belly
       const baseBodyGroup = new THREE.Group();
       
@@ -377,7 +536,7 @@
       body.position.y = 0.13;
       body.castShadow = true;
       baseBodyGroup.add(body);
-
+ 
       // Flattened belly slightly offset forward
       const bellyGeo = new THREE.CapsuleGeometry(0.065, 0.08, 8, 12);
       const belly = new THREE.Mesh(bellyGeo, matBelly);
@@ -388,7 +547,7 @@
       // Apply body scaling
       baseBodyGroup.scale.set(config.bodyScale[0], config.bodyScale[1], config.bodyScale[2]);
       group.add(baseBodyGroup);
-
+ 
       // 2. Head Group (Ears, Eyes, Snout)
       const headHeight = 0.13 + (0.05 * config.bodyScale[1]);
       
@@ -398,19 +557,19 @@
       snout.scale.set(1, 0.8, 1.4);
       snout.position.set(0, headHeight - 0.02, 0.07 * config.bodyScale[2]);
       group.add(snout);
-
+ 
       // Nose
       const noseGeo = new THREE.SphereGeometry(0.012, 8, 8);
       const nose = new THREE.Mesh(noseGeo, matNose);
       nose.position.set(0, headHeight - 0.01, (0.07 * config.bodyScale[2]) + 0.045);
       group.add(nose);
-
+ 
       // Whiskers (Mouth Bristles) - Paper thin cylinders optimized for VR
       const whiskerLength = config.whiskerLength || 0.08;
       const whiskerGeo = new THREE.CylinderGeometry(0.001, 0.0005, whiskerLength, 4);
       whiskerGeo.translate(0, whiskerLength / 2, 0); 
       const whiskerMat = new THREE.MeshStandardMaterial({ color: config.whiskerColor || 0xeeeeee, roughness: 0.5 });
-
+ 
       const createWhiskerSide = (isRight) => {
         const sideGroup = new THREE.Group();
         const spread = config.whiskerSpread || 0.2;
@@ -428,7 +587,7 @@
         return sideGroup;
       };
       group.add(createWhiskerSide(false), createWhiskerSide(true));
-
+ 
       // Eyes (Larger, cuter with highlights)
       const createEye = (x) => {
         const eyeGroup = new THREE.Group();
@@ -450,7 +609,7 @@
       };
       const spacing = config.eyeSpacing || 0.035;
       group.add(createEye(-spacing), createEye(spacing));
-
+ 
       // Ears (Hierarchical structure)
       const createEar = (x, isRight) => {
         const earGroup = new THREE.Group();
@@ -470,7 +629,7 @@
         return earGroup;
       };
       group.add(createEar(-0.06 * config.bodyScale[0], false), createEar(0.06 * config.bodyScale[0], true));
-
+ 
       // 3. Limbs (Paws/Feet)
       const pawGeo = new THREE.CapsuleGeometry(0.012, 0.02, 6, 8);
       const createPaw = (x, y, z, rotX, rotZ) => {
@@ -483,7 +642,7 @@
       group.add(createPaw(0.06 * config.bodyScale[0], 0.12, 0.06, Math.PI/2.5, -0.2));
       group.add(createPaw(-0.04 * config.bodyScale[0], 0.02, 0.05, Math.PI/2, 0.1));
       group.add(createPaw(0.04 * config.bodyScale[0], 0.02, 0.05, Math.PI/2, -0.1));
-
+ 
       // 4. Tail (CatmullRomCurve3 into TubeGeometry)
       const tailPoints = [];
       const segments = 10;
@@ -500,7 +659,7 @@
       const tail = new THREE.Mesh(tailGeo, matBody);
       tail.position.set(0, 0, -0.05 * config.bodyScale[2]); 
       group.add(tail);
-
+ 
       // Shadow casting
       group.traverse(child => {
         if (child.isMesh) {
@@ -508,10 +667,10 @@
           child.receiveShadow = true;
         }
       });
-
+ 
       return group;
     }
-
+ 
     function createTextTex(text, color, size="42px") {
       const cvs = document.createElement('canvas'); cvs.width = 512; cvs.height = 128; const ctx = cvs.getContext('2d');
       ctx.fillStyle = 'rgba(62, 39, 35, 0.8)'; ctx.fillRect(0,0,cvs.width,cvs.height);
@@ -519,7 +678,7 @@
       ctx.fillStyle = color; ctx.font = `bold ${size} "SF Pro Rounded", Arial`; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(text, cvs.width/2, cvs.height/2); return makeUITexture(cvs);
     }
-
+ 
     function buildUI() {
       scorePanel = new THREE.Group();
       scorePanel.position.set(-0.7, 0.1, -1.0); scorePanel.rotation.y = 0.3;
@@ -531,24 +690,24 @@
       comboText.position.y = -0.25; scorePanel.add(comboText);
       scene.add(scorePanel);
     }
-
+ 
     function updateUI() {
       const swap = (mesh, tex) => { if (mesh.material.map) mesh.material.map.dispose(); mesh.material.map = tex; mesh.material.needsUpdate = true; };
       swap(scorePanel.getObjectByName("hs"), createTextTex(`🏆 Bedste: ${state.highScore}`, '#ffdd00', '36px'));
       swap(scorePanel.getObjectByName("sc"), createTextTex(`🎵 Point: ${state.score}`, '#88ff88', '42px'));
       swap(comboText, createTextTex(`Combo: ${state.combo}`, state.combo > 5 ? '#ff4444' : '#ffaa00', '36px'));
     }
-
+ 
     // --- RHYTHM TRACK SYSTEM ---
     function spawnNote(gameTime) {
       // Progressively introduce more gesture types
       const availableTypes = (gameTime < 15) ? [0, 1] : (gameTime < 30) ? [0, 1, 2, 3] : [0, 1, 2, 3, 4, 5];
       const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
       const colors = [0x4ade80, 0xf472b6, 0x60a5fa, 0xfb923c, 0xa855f7, 0xeab308];
-
+ 
       const maxLength = Math.max(0.2, 0.8 - (gameTime * 0.005));
       const noteLength = Math.random() * maxLength + 0.2; 
-
+ 
       const group = new THREE.Group();
       
       const icon = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.25), noteMaterials[type]);
@@ -560,13 +719,13 @@
       tail.rotation.x = Math.PI / 2;
       tail.position.z = -(noteLength / 2) - 0.05; 
       group.add(tail);
-
+ 
       group.position.set(CONSTANTS.trackX, CONSTANTS.trackY, CONSTANTS.spawnZ);
       group.userData = { type, active: true, length: noteLength };
       
       scene.add(group); notes.push(group);
     }
-
+ 
     function setupControllers(session) {
       controllers = [renderer.xr.getController(0), renderer.xr.getController(1)];
       controllers.forEach((c, i) => {
@@ -581,7 +740,7 @@
         });
       });
     }
-
+ 
     function processControllerSelection() {
       if (!state.isControllerSelection) return;
       const elapsed = (state.clock.getElapsedTime() - state.gameStartTime) * 1000;
@@ -599,13 +758,13 @@
       }
       if (elapsed > CONSTANTS.selectTime) confirmController(Math.max(0, highestIdx));
     }
-
+ 
     function confirmController(idx) {
       state.isControllerSelection = false; state.selectedCtrlIdx = idx; state.activeController = controllers[idx];
       
       const currPos = state.activeController.position;
       lastCtrl.y = currPos.y; lastCtrl.x = currPos.x; lastCtrl.rotZ = state.activeController.rotation.z;
-
+ 
       triggerConfetti(state.activeController.position);
       playSynth('select'); 
       
@@ -615,28 +774,28 @@
       state.isPlaying = true; state.gameStartTime = state.clock.getElapsedTime();
       state.lastSpawn = state.clock.getElapsedTime() + 1.0; 
     }
-
+ 
     // DISTINCT GESTURE DETECTION (6 Actions)
     function handleGestures(dt) {
       if (!state.activeController || !state.isPlaying || state.isBreak) return;
-
+ 
       if (state.gestureCooldown > 0) state.gestureCooldown -= dt;
-
+ 
       const currPos = state.activeController.position;
       const currRot = state.activeController.rotation;
       
       const velY = (currPos.y - lastCtrl.y) / dt;
       const velX = (currPos.x - lastCtrl.x) / dt;
       const velRotZ = (currRot.z - lastCtrl.rotZ) / dt; 
-
+ 
       lastCtrl.y = currPos.y; lastCtrl.x = currPos.x; lastCtrl.rotZ = currRot.z;
-
+ 
       if (state.gestureCooldown <= 0) {
         const linearThreshold = 0.8; // m/s
         const twistThreshold = 1.8; // rad/s
-
+ 
         let actionTriggered = -1;
-
+ 
         // If-Else chain prevents double-firing conflicting moves on the same frame
         if (velY > linearThreshold) actionTriggered = 0; // 0: Swipe Up
         else if (velY < -linearThreshold) actionTriggered = 1; // 1: Swipe Down
@@ -644,14 +803,14 @@
         else if (velX > linearThreshold) actionTriggered = 3; // 3: Swipe Right
         else if (velRotZ > twistThreshold) actionTriggered = 4; // 4: Twist Left
         else if (velRotZ < -twistThreshold) actionTriggered = 5; // 5: Twist Right
-
+ 
         if (actionTriggered !== -1) {
           triggerAction(actionTriggered);
           state.gestureCooldown = 0.35; 
         }
       }
     }
-
+ 
     function triggerAction(actionType) {
       let closest = null;
       
@@ -664,7 +823,7 @@
           closest = note;
         }
       });
-
+ 
       if (closest && closest.userData.type === actionType) {
         closest.userData.active = false; closest.visible = false;
         state.combo++; state.score += 10 + (state.combo * 2);
@@ -682,7 +841,7 @@
         else if (actionType === 3) pTarget.rotZ = -0.5; // Lean Right (Swipe)
         else if (actionType === 4) pTarget.rotY = 1.0; // Twist Left (Swirl)
         else if (actionType === 5) pTarget.rotY = -1.0; // Twist Right (Swirl)
-
+ 
         ringColorTarget.setHex(0x00ff00);
       } else {
         if (closest) {
@@ -693,7 +852,7 @@
         }
       }
     }
-
+ 
     function triggerConfetti(pos, hexColor = 0xffffff) {
       for (let i = 0; i < 15; i++) {
         const p = particlePool.find(x => !x.active); if (!p) continue;
@@ -701,7 +860,7 @@
         p.mesh.position.copy(pos); p.mesh.material.color.setHex(hexColor); p.rot = (Math.random() - 0.5) * 0.2; p.mesh.visible = true;
       }
     }
-
+ 
     function checkClap() {
       if (controllers.length < 2 || !controllers[0].visible || !controllers[1].visible) { clapStart = 0; return; }
       const c1 = controllers[0], c2 = controllers[1];
@@ -726,13 +885,14 @@
       ctx.fillStyle = '#000'; ctx.font = '60px Arial'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
       ctx.fillText(`👏 Hold for at lukke: ${remain}s`, 512, 110); tex.needsUpdate = true;
     }
-
+ 
     function render(time, frame) {
       const dt = Math.min(state.clock.getDelta(), 0.1); 
       if (!frame) return;
       if (state.isControllerSelection) processControllerSelection(); else checkClap();
       drawClapHUD();
-
+      animateTableScene(state.clock.elapsedTime, dt, worldRefs); // candle flicker + steam, always on
+ 
       // PHYSICS INTERPOLATION (LERPING)
       playerMouse.position.y += (pTarget.y - playerMouse.position.y) * 15 * dt;
       playerMouse.rotation.y += (pTarget.rotY - playerMouse.rotation.y) * 15 * dt;
@@ -743,12 +903,12 @@
       pTarget.rotY += (0 - pTarget.rotY) * 5 * dt;
       pTarget.rotZ += (0 - pTarget.rotZ) * 5 * dt;
       pTarget.scaleY += (1.0 - pTarget.scaleY) * 5 * dt;
-
+ 
       if (hitRing) {
         hitRing.material.color.lerp(ringColorTarget, 10 * dt);
         ringColorTarget.lerp(new THREE.Color(0xffffff), 3 * dt);
       }
-
+ 
       if (state.isPlaying && !state.isControllerSelection) {
         handleGestures(dt);
         const gameTime = state.clock.getElapsedTime() - state.gameStartTime;
@@ -756,7 +916,7 @@
         
         const beat = time * 3.0;
         const bounce = Math.abs(Math.sin(beat));
-
+ 
         // 45 SECONDS ACTIVE, 10 SECONDS BREAK
         if (cyclePos > 45) {
           // BREAK TIME: Dance sequence
@@ -767,7 +927,7 @@
             const targetY = MOUSE_BASE_Y + (bounce * 0.08); 
             const targetRotY = (m.baseX < 0 ? 0.2 : -0.2) + Math.sin(beat * 0.5) * 0.3;
             const targetRotZ = Math.sin(beat * 0.5) * -0.15; 
-
+ 
             const lerpSpeed = 10;
             m.mesh.position.x += (targetX - m.mesh.position.x) * lerpSpeed * dt;
             m.mesh.position.y += (targetY - m.mesh.position.y) * lerpSpeed * dt;
@@ -776,7 +936,7 @@
             if (diffY > Math.PI) diffY -= Math.PI * 2;
             if (diffY < -Math.PI) diffY += Math.PI * 2;
             m.mesh.rotation.y += diffY * lerpSpeed * dt;
-
+ 
             m.mesh.rotation.z += (targetRotZ - m.mesh.rotation.z) * lerpSpeed * dt;
             m.mesh.rotation.x += (0 - m.mesh.rotation.x) * lerpSpeed * dt;
             m.mesh.scale.y += (1.0 - m.mesh.scale.y) * lerpSpeed * dt;
@@ -799,12 +959,12 @@
             if (diffY > Math.PI) diffY -= Math.PI * 2;
             if (diffY < -Math.PI) diffY += Math.PI * 2;
             m.mesh.rotation.y += diffY * lerpSpeed * dt;
-
+ 
             m.mesh.rotation.z += (targetRotZ - m.mesh.rotation.z) * lerpSpeed * dt;
             m.mesh.rotation.x += (0 - m.mesh.rotation.x) * lerpSpeed * dt;
             m.mesh.scale.y += (1.0 - m.mesh.scale.y) * lerpSpeed * dt;
           });
-
+ 
           // Buffer: Ensure no notes spawn 3 seconds before the break begins!
           if (cyclePos < 42.0) {
             if (state.clock.getElapsedTime() - state.lastSpawn > state.spawnInterval) {
@@ -814,12 +974,12 @@
             }
           }
         }
-
+ 
         for (let i = notes.length - 1; i >= 0; i--) {
           const n = notes[i]; n.position.z += state.trackSpeed * dt;
           
           n.children[0].quaternion.copy(camera.quaternion);
-
+ 
           if (n.position.z - n.userData.length - 0.05 > 0.2) { 
             if (n.userData.active) {
               state.combo = 0; updateUI(); 
@@ -829,7 +989,7 @@
           }
         }
       }
-
+ 
       for (let i = 0; i < particlePool.length; i++) {
         const p = particlePool[i];
         if (p.active) {
@@ -839,11 +999,12 @@
       }
       renderer.render(scene, camera);
     }
-
+ 
     function clearScene() {
       [tableGroup, playerMouse, scorePanel, clapHUD, hitRing].forEach(o => { if (o) scene.remove(o); });
       bgMice.forEach(m => scene.remove(m.mesh)); bgMice = []; notes.forEach(n => scene.remove(n)); notes = [];
       particlePool.forEach(p => { p.active = false; p.mesh.visible = false; });
+      worldRefs.animatedCandles = []; worldRefs.animatedVapors = [];
       clapStart = 0; clapHUD = null;
     }
   </script>
