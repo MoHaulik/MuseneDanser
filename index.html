@@ -2,7 +2,7 @@
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <title>Musene Danser - NXT/Care (Take 8 - Gentle Mode)</title>
+  <title>Musene Danser - NXT/Care (Take 9 - Derpy Husmus)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
     :root {
@@ -151,6 +151,11 @@
       hitTolerance: 0.35 // Massively increased tolerance
     };
 
+    // Single source of truth for where a mouse rests on the table.
+    // The Derpy model's body base sits at local y=0 (the old model was at y=-0.02),
+    // so -0.35 places the new mice in the EXACT same world space as the originals.
+    const MOUSE_BASE_Y = -0.35;
+
     // --- GLOBALS ---
     let camera, scene, renderer, backgroundMusic;
     let tableGroup, playerMouse, bgMice = [], scorePanel, comboText;
@@ -160,12 +165,39 @@
     let clapStart = 0, clapHUD = null;
     
     // Animation Targets
-    const pTarget = { y: -0.33, rotY: 0, rotZ: 0, scaleY: 1.0 };
+    const pTarget = { y: MOUSE_BASE_Y, rotY: 0, rotZ: 0, scaleY: 1.0 };
     const ringColorTarget = new THREE.Color(0xffffff);
 
     // Gesture Tracking Variables
     const lastCtrl = { x: 0, y: 0, z: 0, rotZ: 0 };
     let isLaunching = false, toastTimeout;
+
+    // --- DERPY HUSMUS CONFIGS ---
+    // Configuration for "Derpy Husmus (Fjollet)"
+    const derpyMouseConfig = {
+      bodyColor: 0x78736e,
+      bellyColor: 0xd5d2cd,
+      earColor: 0x78736e,
+      innerEarColor: 0xcca8a8,
+      noseColor: 0x302a28,
+      tailLength: 0.18,
+      tailThickness: 0.007,
+      tailCurl: 1,
+      bodyScale: [1, 1, 1],
+      earScale: [1, 1, 1],
+      earRotZ: 0.3,         // Ears angled slightly outwards
+      whiskerColor: 0xeeeeee,
+      whiskerLength: 0.08,
+      whiskerSpread: 0.4,   // Extra wide, chaotic whiskers
+      eyeScale: 1.2,        // Slightly oversized eyes
+      eyeSpacing: 0.045     // Wide-set eyes for that perfect derp look
+    };
+
+    // Two background dancers — same derpy species, distinguishable fur.
+    const derpyBrownConfig = { ...derpyMouseConfig,
+      bodyColor: 0x8d6e63, earColor: 0x8d6e63, bellyColor: 0xc7b0a3 };
+    const derpyCreamConfig = { ...derpyMouseConfig,
+      bodyColor: 0xece6d4, earColor: 0xece6d4, bellyColor: 0xfaf6ea, innerEarColor: 0xe0b8b8 };
 
     // ---------- helpers ----------
     function makeUITexture(canvas) {
@@ -298,15 +330,15 @@
       const table = new THREE.Mesh(tableGeo, tableMat);
       table.position.set(0, -0.4, -1.2); tableGroup.add(table); scene.add(tableGroup);
 
-      playerMouse = createCuteMouse(0xaaaaaa); 
-      playerMouse.position.set(0, -0.33, -1.2); scene.add(playerMouse);
+      playerMouse = createAdvancedMouse(derpyMouseConfig); 
+      playerMouse.position.set(0, MOUSE_BASE_Y, -1.2); scene.add(playerMouse);
 
-      const bgMouse1 = createCuteMouse(0x8d6e63); 
-      bgMouse1.position.set(-0.5, -0.33, -1.5); bgMouse1.rotation.y = 0.3;
+      const bgMouse1 = createAdvancedMouse(derpyBrownConfig); 
+      bgMouse1.position.set(-0.5, MOUSE_BASE_Y, -1.5); bgMouse1.rotation.y = 0.3;
       scene.add(bgMouse1); bgMice.push({ mesh: bgMouse1, offset: 0, baseX: -0.5 });
 
-      const bgMouse2 = createCuteMouse(0xefeed4); 
-      bgMouse2.position.set(0.5, -0.33, -1.4); bgMouse2.rotation.y = -0.3;
+      const bgMouse2 = createAdvancedMouse(derpyCreamConfig); 
+      bgMouse2.position.set(0.5, MOUSE_BASE_Y, -1.4); bgMouse2.rotation.y = -0.3;
       scene.add(bgMouse2); bgMice.push({ mesh: bgMouse2, offset: Math.PI, baseX: 0.5 });
 
       hitRing = new THREE.Mesh(
@@ -319,50 +351,163 @@
       buildUI();
     }
 
-    function createCuteMouse(colorHex) {
+    /**
+     * Advanced Mouse Generator optimized for Meta Quest 3 (Low Poly, High Detail).
+     * Replaces the old `createCuteMouse` function. Uses the module-scope THREE.
+     * @param {Object} config - The mouse configuration object (e.g., derpyMouseConfig)
+     * @returns {THREE.Group} - The complete 3D mouse model
+     */
+    function createAdvancedMouse(config) {
       const group = new THREE.Group();
-      const body = new THREE.Mesh(
-        new THREE.CapsuleGeometry(0.08, 0.08, 8, 16),
-        new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.8 })
-      );
-      body.position.y = 0.1; group.add(body);
 
-      const earMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 1.0 });
-      const innerEarMat = new THREE.MeshStandardMaterial({ color: 0xffccdd, roughness: 1.0 });
+      // Materials Cache - Reused to save memory draw calls on Quest 3
+      const matBody = new THREE.MeshStandardMaterial({ color: config.bodyColor, roughness: 0.8 });
+      const matBelly = new THREE.MeshStandardMaterial({ color: config.bellyColor, roughness: 0.9 });
+      const matEar = new THREE.MeshStandardMaterial({ color: config.earColor, roughness: 0.9 });
+      const matInnerEar = new THREE.MeshStandardMaterial({ color: config.innerEarColor, roughness: 1.0 });
+      const matNose = new THREE.MeshStandardMaterial({ color: config.noseColor, roughness: 0.4 });
+      const matEye = new THREE.MeshBasicMaterial({ color: 0x111111 });
+      const matHighlight = new THREE.MeshBasicMaterial({ color: 0xffffff });
+
+      // 1. Body & Belly
+      const baseBodyGroup = new THREE.Group();
       
-      const createEar = (x, rotZ) => {
+      const bodyGeo = new THREE.CapsuleGeometry(0.08, 0.1, 8, 16);
+      const body = new THREE.Mesh(bodyGeo, matBody);
+      body.position.y = 0.13;
+      body.castShadow = true;
+      baseBodyGroup.add(body);
+
+      // Flattened belly slightly offset forward
+      const bellyGeo = new THREE.CapsuleGeometry(0.065, 0.08, 8, 12);
+      const belly = new THREE.Mesh(bellyGeo, matBelly);
+      belly.position.set(0, 0.12, 0.025);
+      belly.scale.set(1, 1, 0.7);
+      baseBodyGroup.add(belly);
+      
+      // Apply body scaling
+      baseBodyGroup.scale.set(config.bodyScale[0], config.bodyScale[1], config.bodyScale[2]);
+      group.add(baseBodyGroup);
+
+      // 2. Head Group (Ears, Eyes, Snout)
+      const headHeight = 0.13 + (0.05 * config.bodyScale[1]);
+      
+      // Snout
+      const snoutGeo = new THREE.SphereGeometry(0.035, 12, 12);
+      const snout = new THREE.Mesh(snoutGeo, matBelly);
+      snout.scale.set(1, 0.8, 1.4);
+      snout.position.set(0, headHeight - 0.02, 0.07 * config.bodyScale[2]);
+      group.add(snout);
+
+      // Nose
+      const noseGeo = new THREE.SphereGeometry(0.012, 8, 8);
+      const nose = new THREE.Mesh(noseGeo, matNose);
+      nose.position.set(0, headHeight - 0.01, (0.07 * config.bodyScale[2]) + 0.045);
+      group.add(nose);
+
+      // Whiskers (Mouth Bristles) - Paper thin cylinders optimized for VR
+      const whiskerLength = config.whiskerLength || 0.08;
+      const whiskerGeo = new THREE.CylinderGeometry(0.001, 0.0005, whiskerLength, 4);
+      whiskerGeo.translate(0, whiskerLength / 2, 0); 
+      const whiskerMat = new THREE.MeshStandardMaterial({ color: config.whiskerColor || 0xeeeeee, roughness: 0.5 });
+
+      const createWhiskerSide = (isRight) => {
+        const sideGroup = new THREE.Group();
+        const spread = config.whiskerSpread || 0.2;
+        
+        // 3 whiskers per side
+        for(let i = -1; i <= 1; i++) {
+          const w = new THREE.Mesh(whiskerGeo, whiskerMat);
+          w.rotation.z = isRight ? -Math.PI/2 : Math.PI/2; 
+          w.rotation.x = i * spread; 
+          w.rotation.y = isRight ? 0.2 : -0.2; 
+          sideGroup.add(w);
+        }
+        
+        sideGroup.position.set(isRight ? 0.025 : -0.025, headHeight - 0.02, (0.07 * config.bodyScale[2]) + 0.02);
+        return sideGroup;
+      };
+      group.add(createWhiskerSide(false), createWhiskerSide(true));
+
+      // Eyes (Larger, cuter with highlights)
+      const createEye = (x) => {
+        const eyeGroup = new THREE.Group();
+        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 12), matEye);
+        
+        const hl = new THREE.Mesh(new THREE.SphereGeometry(0.004, 8, 8), matHighlight);
+        hl.position.set(-0.005, 0.005, 0.012); 
+        eye.add(hl);
+        
+        const hl2 = new THREE.Mesh(new THREE.SphereGeometry(0.002, 6, 6), matHighlight);
+        hl2.position.set(0.006, -0.004, 0.012);
+        eye.add(hl2);
+        
+        const eScale = config.eyeScale || 1.0;
+        eyeGroup.scale.set(eScale, eScale, eScale);
+        eyeGroup.add(eye);
+        eyeGroup.position.set(x, headHeight + 0.02, 0.065 * config.bodyScale[2]);
+        return eyeGroup;
+      };
+      const spacing = config.eyeSpacing || 0.035;
+      group.add(createEye(-spacing), createEye(spacing));
+
+      // Ears (Hierarchical structure)
+      const createEar = (x, isRight) => {
         const earGroup = new THREE.Group();
-        const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.01, 16), earMat);
-        const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.012, 16), innerEarMat);
-        outer.rotation.x = Math.PI / 2; inner.rotation.x = Math.PI / 2;
-        earGroup.add(outer, inner); 
-        earGroup.position.set(x, 0.19, 0.02); 
-        earGroup.rotation.z = rotZ;
+        const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.01, 16), matEar);
+        const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.012, 16), matInnerEar);
+        
+        outer.rotation.x = Math.PI / 2;
+        inner.rotation.x = Math.PI / 2;
+        earGroup.add(outer, inner);
+        earGroup.position.set(x, headHeight + 0.06, 0.02);
+        
+        earGroup.scale.set(config.earScale[0], config.earScale[1], config.earScale[2]);
+        earGroup.rotation.z = isRight ? -config.earRotZ : config.earRotZ;
+        earGroup.rotation.y = isRight ? -0.2 : 0.2;
+        earGroup.rotation.x = 0.1;
+        
         return earGroup;
       };
-      group.add(createEar(-0.05, 0.2), createEar(0.05, -0.2));
+      group.add(createEar(-0.06 * config.bodyScale[0], false), createEar(0.06 * config.bodyScale[0], true));
 
-      const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
-      const hlMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
-      const createEye = (x) => {
-        const eye = new THREE.Mesh(new THREE.SphereGeometry(0.01, 8, 8), eyeMat);
-        const hl = new THREE.Mesh(new THREE.SphereGeometry(0.003, 4, 4), hlMat);
-        hl.position.set(-0.003, 0.004, 0.007); eye.add(hl);
-        eye.position.set(x, 0.15, 0.08); return eye;
+      // 3. Limbs (Paws/Feet)
+      const pawGeo = new THREE.CapsuleGeometry(0.012, 0.02, 6, 8);
+      const createPaw = (x, y, z, rotX, rotZ) => {
+        const paw = new THREE.Mesh(pawGeo, matBody);
+        paw.position.set(x, y, z);
+        paw.rotation.set(rotX, 0, rotZ);
+        return paw;
       };
-      group.add(createEye(-0.03), createEye(0.03));
+      group.add(createPaw(-0.06 * config.bodyScale[0], 0.12, 0.06, Math.PI/2.5, 0.2));
+      group.add(createPaw(0.06 * config.bodyScale[0], 0.12, 0.06, Math.PI/2.5, -0.2));
+      group.add(createPaw(-0.04 * config.bodyScale[0], 0.02, 0.05, Math.PI/2, 0.1));
+      group.add(createPaw(0.04 * config.bodyScale[0], 0.02, 0.05, Math.PI/2, -0.1));
 
-      const nose = new THREE.Mesh(
-        new THREE.SphereGeometry(0.012, 8, 8),
-        new THREE.MeshStandardMaterial({ color: 0xffaacc, roughness: 0.4 })
-      );
-      nose.position.set(0, 0.12, 0.09); group.add(nose);
+      // 4. Tail (CatmullRomCurve3 into TubeGeometry)
+      const tailPoints = [];
+      const segments = 10;
+      for (let i = 0; i <= segments; i++) {
+        const t = i / segments;
+        const tz = -t * config.tailLength; 
+        const ty = 0.04 + Math.sin(t * Math.PI) * (0.05 * config.tailCurl); 
+        const tx = Math.sin(t * Math.PI * 0.5) * (0.02 * config.tailCurl); 
+        tailPoints.push(new THREE.Vector3(tx, ty, tz));
+      }
+      
+      const tailCurve = new THREE.CatmullRomCurve3(tailPoints);
+      const tailGeo = new THREE.TubeGeometry(tailCurve, segments, config.tailThickness, 6, false);
+      const tail = new THREE.Mesh(tailGeo, matBody);
+      tail.position.set(0, 0, -0.05 * config.bodyScale[2]); 
+      group.add(tail);
 
-      const mouth = new THREE.Mesh(
-        new THREE.TorusGeometry(0.008, 0.002, 4, 8, Math.PI),
-        new THREE.MeshBasicMaterial({ color: 0x221111 })
-      );
-      mouth.rotation.x = Math.PI; mouth.position.set(0, 0.10, 0.085); group.add(mouth);
+      // Shadow casting
+      group.traverse(child => {
+        if (child.isMesh) {
+          child.castShadow = true;
+          child.receiveShadow = true;
+        }
+      });
 
       return group;
     }
@@ -531,8 +676,8 @@
         const colors = [0x4ade80, 0xf472b6, 0x60a5fa, 0xfb923c, 0xa855f7, 0xeab308];
         triggerConfetti(closest.position, colors[actionType]);
         
-        if (actionType === 0) pTarget.y = -0.10; // Jump
-        else if (actionType === 1) { pTarget.scaleY = 0.6; pTarget.y = -0.38; } // Squat
+        if (actionType === 0) pTarget.y = MOUSE_BASE_Y + 0.23; // Jump
+        else if (actionType === 1) { pTarget.scaleY = 0.6; pTarget.y = MOUSE_BASE_Y - 0.05; } // Squat
         else if (actionType === 2) pTarget.rotZ = 0.5; // Lean Left (Swipe)
         else if (actionType === 3) pTarget.rotZ = -0.5; // Lean Right (Swipe)
         else if (actionType === 4) pTarget.rotY = 1.0; // Twist Left (Swirl)
@@ -594,7 +739,7 @@
       playerMouse.rotation.z += (pTarget.rotZ - playerMouse.rotation.z) * 15 * dt;
       playerMouse.scale.y += (pTarget.scaleY - playerMouse.scale.y) * 15 * dt;
       
-      pTarget.y += (-0.33 - pTarget.y) * 5 * dt;
+      pTarget.y += (MOUSE_BASE_Y - pTarget.y) * 5 * dt;
       pTarget.rotY += (0 - pTarget.rotY) * 5 * dt;
       pTarget.rotZ += (0 - pTarget.rotZ) * 5 * dt;
       pTarget.scaleY += (1.0 - pTarget.scaleY) * 5 * dt;
@@ -619,7 +764,7 @@
           
           bgMice.forEach((m) => {
             const targetX = m.baseX + Math.sin(beat * 0.5) * 0.15; 
-            const targetY = -0.33 + (bounce * 0.08); 
+            const targetY = MOUSE_BASE_Y + (bounce * 0.08); 
             const targetRotY = (m.baseX < 0 ? 0.2 : -0.2) + Math.sin(beat * 0.5) * 0.3;
             const targetRotZ = Math.sin(beat * 0.5) * -0.15; 
 
@@ -642,7 +787,7 @@
           
           bgMice.forEach(m => { 
             const targetX = m.baseX;
-            const targetY = -0.33 + (Math.abs(Math.sin(time * 2)) * 0.02); 
+            const targetY = MOUSE_BASE_Y + (Math.abs(Math.sin(time * 2)) * 0.02); 
             const targetRotY = m.baseX < 0 ? 0.3 : -0.3; 
             const targetRotZ = 0;
             
