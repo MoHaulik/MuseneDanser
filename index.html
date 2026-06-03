@@ -2,7 +2,7 @@
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <title>Musene Danser - NXT/Care (Take 5)</title>
+  <title>Musene Danser - NXT/Care (Take 8 - Gentle Mode)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
     :root {
@@ -93,13 +93,43 @@
   <div id="toast">XR Experience Launched!</div>
   <button class="exit-ar" id="exit-ar">×</button>
 
-  <audio id="score1-sound" preload="auto" src="score1.mp3"></audio>
-  <audio id="score2-sound" preload="auto" src="score2.mp3"></audio>
-  <audio id="score3-sound" preload="auto" src="score3.mp3"></audio>
-  <audio id="death-sound" preload="auto" src="dead.mp3"></audio> 
-
   <script type="module">
     import * as THREE from 'three';
+
+    // --- AUDIO SYNTHESIZER ---
+    let audioCtx;
+    function initSynth() {
+      if (!audioCtx) audioCtx = new (window.AudioContext || window.webkitAudioContext)();
+      if (audioCtx.state === 'suspended') audioCtx.resume();
+    }
+
+    function playSynth(type) {
+      if (!audioCtx) return;
+      const osc = audioCtx.createOscillator();
+      const gain = audioCtx.createGain();
+      osc.connect(gain);
+      gain.connect(audioCtx.destination);
+      const now = audioCtx.currentTime;
+      
+      if (type === 'hit') {
+        osc.type = 'sine';
+        osc.frequency.setValueAtTime(500 + Math.random()*300, now);
+        osc.frequency.exponentialRampToValueAtTime(1200, now + 0.1);
+        gain.gain.setValueAtTime(0.4, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.1);
+        osc.start(now);
+        osc.stop(now + 0.1);
+      } else if (type === 'select') {
+        osc.type = 'square';
+        osc.frequency.setValueAtTime(440, now);
+        osc.frequency.setValueAtTime(880, now + 0.1);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.01, now + 0.3);
+        osc.start(now);
+        osc.stop(now + 0.3);
+      }
+      // Note: 'miss' sound intentionally removed for a gentler experience!
+    }
 
     // --- GAME STATE ---
     const state = {
@@ -107,16 +137,18 @@
       score: 0, combo: 0, highScore: parseInt(localStorage.getItem('miceDanceHighScore') || '0', 10),
       clock: new THREE.Clock(), gameStartTime: 0,
       selectedCtrlIdx: 0, ctrlHoldStart: {}, activeController: null,
-      cycleTime: 20, // 15s dance, 5s break
+      cycleTime: 55, // 45s dance, 10s break
       isBreak: false, trackSpeed: 1.5,
-      lastSpawn: 0, spawnInterval: 2.5 
+      lastSpawn: 0, spawnInterval: 2.5,
+      gestureCooldown: 0 
     };
 
     const CONSTANTS = {
       selectTime: 4000, holdTime: 3000, clapDist: 0.15, clapTime: 6000,
-      trackX: 0.4,  // MOVED TO THE RIGHT
+      trackX: 0.4, 
       trackY: 0.0,  
-      hitZoneZ: -0.6, spawnZ: -4.0, hitTolerance: 0.15 // Slightly tighter because the sausage tail acts as a buffer
+      hitZoneZ: -0.6, spawnZ: -4.0, 
+      hitTolerance: 0.35 // Massively increased tolerance
     };
 
     // --- GLOBALS ---
@@ -127,10 +159,12 @@
     let noteMaterials = [];
     let clapStart = 0, clapHUD = null;
     
-    // Input Gestures
-    let lastCtrlY = 0, lastCtrlZ = 0;
-    let gestureActive = { up: false, down: false, left: false, right: false };
+    // Animation Targets
+    const pTarget = { y: -0.33, rotY: 0, rotZ: 0, scaleY: 1.0 };
+    const ringColorTarget = new THREE.Color(0xffffff);
 
+    // Gesture Tracking Variables
+    const lastCtrl = { x: 0, y: 0, z: 0, rotZ: 0 };
     let isLaunching = false, toastTimeout;
 
     // ---------- helpers ----------
@@ -172,10 +206,21 @@
 
       generateNoteTextures();
 
+      // Audio setup - Only the background music requires an external file
+      backgroundMusic = new Audio('Musmusic.mp3');
+      backgroundMusic.loop = true; 
+      backgroundMusic.volume = 0.7;
+
       const launchBtn = document.getElementById('launch-button');
       launchBtn.addEventListener('click', () => {
         if (isLaunching) return;
         isLaunching = true;
+        
+        initSynth(); // Init Audio Context on user interaction
+        
+        // Starts background music IMMEDIATELY upon clicking the launch button
+        backgroundMusic.play().catch(err => console.warn("Audio unlock pending interaction", err));
+
         const toast = document.getElementById('toast');
         toast.classList.add('show');
         clearTimeout(toastTimeout);
@@ -183,15 +228,13 @@
         startAR();
       });
 
-      // Updated music file here based on requirements
-      backgroundMusic = new Audio('Musmusic.mp3');
-      backgroundMusic.loop = true; backgroundMusic.volume = 0.7;
       document.getElementById('exit-ar').addEventListener('click', endAR);
     }
 
+    // 6 distinct gesture blocks
     function generateNoteTextures() {
-      const colors = ['#4ade80', '#f472b6', '#60a5fa', '#fb923c']; 
-      for (let i = 0; i < 4; i++) {
+      const colors = ['#4ade80', '#f472b6', '#60a5fa', '#fb923c', '#a855f7', '#eab308']; 
+      for (let i = 0; i < 6; i++) {
         const cvs = document.createElement('canvas'); cvs.width = 256; cvs.height = 256;
         const ctx = cvs.getContext('2d'); const w = cvs.width, h = cvs.height;
 
@@ -200,17 +243,23 @@
         ctx.lineWidth = 12; ctx.strokeStyle = 'white'; ctx.stroke();
         ctx.fillStyle = 'white'; ctx.beginPath();
         
-        if (i === 0) { // UP
+        if (i === 0) { // 0: UP SWIPE
           ctx.moveTo(w/2, 40); ctx.lineTo(w-50, 130); ctx.lineTo(w/2+30, 130);
           ctx.lineTo(w/2+30, 200); ctx.lineTo(w/2-30, 200); ctx.lineTo(w/2-30, 130); ctx.lineTo(50, 130); ctx.fill();
-        } else if (i === 1) { // DOWN
+        } else if (i === 1) { // 1: DOWN SWIPE
           ctx.moveTo(w/2, 216); ctx.lineTo(w-50, 126); ctx.lineTo(w/2+30, 126);
           ctx.lineTo(w/2+30, 56); ctx.lineTo(w/2-30, 56); ctx.lineTo(w/2-30, 126); ctx.lineTo(50, 126); ctx.fill();
-        } else if (i === 2) { // LEFT
+        } else if (i === 2) { // 2: LEFT SWIPE
+          ctx.moveTo(40, h/2); ctx.lineTo(130, h-50); ctx.lineTo(130, h/2+30);
+          ctx.lineTo(200, h/2+30); ctx.lineTo(200, h/2-30); ctx.lineTo(130, h/2-30); ctx.lineTo(130, 50); ctx.fill();
+        } else if (i === 3) { // 3: RIGHT SWIPE
+          ctx.moveTo(216, h/2); ctx.lineTo(126, h-50); ctx.lineTo(126, h/2+30);
+          ctx.lineTo(56, h/2+30); ctx.lineTo(56, h/2-30); ctx.lineTo(126, h/2-30); ctx.lineTo(126, 50); ctx.fill();
+        } else if (i === 4) { // 4: SWIRL LEFT
           ctx.arc(w/2, h/2 + 10, 60, Math.PI * 1.5, Math.PI * 0.5, true); 
           ctx.lineWidth = 30; ctx.strokeStyle = 'white'; ctx.stroke();
           ctx.beginPath(); ctx.moveTo(w/2 + 20, h/2 - 80); ctx.lineTo(w/2 - 40, h/2 - 50); ctx.lineTo(w/2 + 20, h/2 - 20); ctx.fill();
-        } else if (i === 3) { // RIGHT
+        } else if (i === 5) { // 5: SWIRL RIGHT
           ctx.arc(w/2, h/2 + 10, 60, Math.PI * 1.5, Math.PI * 0.5, false); 
           ctx.lineWidth = 30; ctx.strokeStyle = 'white'; ctx.stroke();
           ctx.beginPath(); ctx.moveTo(w/2 - 20, h/2 - 80); ctx.lineTo(w/2 + 40, h/2 - 50); ctx.lineTo(w/2 - 20, h/2 - 20); ctx.fill();
@@ -244,23 +293,22 @@
 
     function buildWorld() {
       tableGroup = new THREE.Group();
-      const tableGeo = new THREE.BoxGeometry(4, 0.1, 3);
+      const tableGeo = new THREE.BoxGeometry(2.2, 0.1, 1.5);
       const tableMat = new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.9, metalness: 0.1 });
       const table = new THREE.Mesh(tableGeo, tableMat);
-      table.position.set(0, -0.4, -1.5); tableGroup.add(table); scene.add(tableGroup);
+      table.position.set(0, -0.4, -1.2); tableGroup.add(table); scene.add(tableGroup);
 
       playerMouse = createCuteMouse(0xaaaaaa); 
-      playerMouse.position.set(0, -0.35, -1.2); scene.add(playerMouse);
+      playerMouse.position.set(0, -0.33, -1.2); scene.add(playerMouse);
 
       const bgMouse1 = createCuteMouse(0x8d6e63); 
-      bgMouse1.position.set(-0.6, -0.35, -2.0); bgMouse1.rotation.y = 0.5;
-      scene.add(bgMouse1); bgMice.push({ mesh: bgMouse1, offset: 0 });
+      bgMouse1.position.set(-0.5, -0.33, -1.5); bgMouse1.rotation.y = 0.3;
+      scene.add(bgMouse1); bgMice.push({ mesh: bgMouse1, offset: 0, baseX: -0.5 });
 
       const bgMouse2 = createCuteMouse(0xefeed4); 
-      bgMouse2.position.set(0.6, -0.35, -1.8); bgMouse2.rotation.y = -0.5;
-      scene.add(bgMouse2); bgMice.push({ mesh: bgMouse2, offset: Math.PI });
+      bgMouse2.position.set(0.5, -0.33, -1.4); bgMouse2.rotation.y = -0.3;
+      scene.add(bgMouse2); bgMice.push({ mesh: bgMouse2, offset: Math.PI, baseX: 0.5 });
 
-      // Track moved to the right
       hitRing = new THREE.Mesh(
         new THREE.RingGeometry(0.13, 0.16, 32),
         new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.5, side: THREE.DoubleSide })
@@ -271,19 +319,14 @@
       buildUI();
     }
 
-    // THE ULTIMATE HYBRID GHIBLI MOUSE
     function createCuteMouse(colorHex) {
       const group = new THREE.Group();
-      
-      // Capsule Body (Take 2)
       const body = new THREE.Mesh(
         new THREE.CapsuleGeometry(0.08, 0.08, 8, 16),
         new THREE.MeshStandardMaterial({ color: colorHex, roughness: 0.8 })
       );
-      body.position.y = 0.1;
-      group.add(body);
+      body.position.y = 0.1; group.add(body);
 
-      // Two-Tone Ears on the Capsule Head
       const earMat = new THREE.MeshStandardMaterial({ color: colorHex, roughness: 1.0 });
       const innerEarMat = new THREE.MeshStandardMaterial({ color: 0xffccdd, roughness: 1.0 });
       
@@ -299,7 +342,6 @@
       };
       group.add(createEar(-0.05, 0.2), createEar(0.05, -0.2));
 
-      // Cute Anime/Ghibli Eyes with Highlights (Take 3)
       const eyeMat = new THREE.MeshBasicMaterial({ color: 0x111111 });
       const hlMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
       const createEye = (x) => {
@@ -310,14 +352,12 @@
       };
       group.add(createEye(-0.03), createEye(0.03));
 
-      // Pink Nose (Take 3)
       const nose = new THREE.Mesh(
         new THREE.SphereGeometry(0.012, 8, 8),
         new THREE.MeshStandardMaterial({ color: 0xffaacc, roughness: 0.4 })
       );
       nose.position.set(0, 0.12, 0.09); group.add(nose);
 
-      // Little Smiling Mouth (Take 3)
       const mouth = new THREE.Mesh(
         new THREE.TorusGeometry(0.008, 0.002, 4, 8, Math.PI),
         new THREE.MeshBasicMaterial({ color: 0x221111 })
@@ -337,7 +377,6 @@
 
     function buildUI() {
       scorePanel = new THREE.Group();
-      // Moved to LEFT side to balance the UI
       scorePanel.position.set(-0.7, 0.1, -1.0); scorePanel.rotation.y = 0.3;
       const hsMesh = new THREE.Mesh(new THREE.PlaneGeometry(0.8, 0.2), makeUIMaterial(createTextTex(`🏆 Bedste: ${state.highScore}`, '#ffdd00', '36px')));
       hsMesh.position.y = 0.25; hsMesh.name = "hs"; scorePanel.add(hsMesh);
@@ -355,32 +394,25 @@
       swap(comboText, createTextTex(`Combo: ${state.combo}`, state.combo > 5 ? '#ff4444' : '#ffaa00', '36px'));
     }
 
-    // --- SAUSAGE RHYTHM TRACK SYSTEM ---
+    // --- RHYTHM TRACK SYSTEM ---
     function spawnNote(gameTime) {
-      // INTRO PHASE: Only Up/Down notes for the first 15 seconds to establish rhythm
-      const availableTypes = (gameTime < 15) ? [0, 1] : [0, 1, 2, 3];
+      // Progressively introduce more gesture types
+      const availableTypes = (gameTime < 15) ? [0, 1] : (gameTime < 30) ? [0, 1, 2, 3] : [0, 1, 2, 3, 4, 5];
       const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
-      
-      const colors = [0x4ade80, 0xf472b6, 0x60a5fa, 0xfb923c];
+      const colors = [0x4ade80, 0xf472b6, 0x60a5fa, 0xfb923c, 0xa855f7, 0xeab308];
 
-      // Random Sausage Length. Shorter on average as game progresses.
       const maxLength = Math.max(0.2, 0.8 - (gameTime * 0.005));
       const noteLength = Math.random() * maxLength + 0.2; 
 
       const group = new THREE.Group();
       
-      // Front Icon
       const icon = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.25), noteMaterials[type]);
-      icon.position.z = 0;
-      group.add(icon);
+      icon.position.z = 0; group.add(icon);
       
-      // 3D Sausage "Tail"
       const tailGeo = new THREE.CylinderGeometry(0.08, 0.08, noteLength, 16);
       const tailMat = new THREE.MeshBasicMaterial({ color: colors[type], transparent: true, opacity: 0.6 });
       const tail = new THREE.Mesh(tailGeo, tailMat);
       tail.rotation.x = Math.PI / 2;
-      
-      // Shift tail backwards and add a slight gap (-0.05) to avoid clipping with the 2D icon in front
       tail.position.z = -(noteLength / 2) - 0.05; 
       group.add(tail);
 
@@ -390,7 +422,6 @@
       scene.add(group); notes.push(group);
     }
 
-    // --- CONTROLLER LOGIC ---
     function setupControllers(session) {
       controllers = [renderer.xr.getController(0), renderer.xr.getController(1)];
       controllers.forEach((c, i) => {
@@ -426,49 +457,64 @@
 
     function confirmController(idx) {
       state.isControllerSelection = false; state.selectedCtrlIdx = idx; state.activeController = controllers[idx];
-      lastCtrlY = state.activeController.position.y; lastCtrlZ = state.activeController.rotation.z;
+      
+      const currPos = state.activeController.position;
+      lastCtrl.y = currPos.y; lastCtrl.x = currPos.x; lastCtrl.rotZ = state.activeController.rotation.z;
+
       triggerConfetti(state.activeController.position);
-      document.getElementById('score3-sound').play().catch(() => {});
+      playSynth('select'); 
+      
+      // Ensure the music continues smoothly if they confirm controller
       backgroundMusic.play().catch(() => {});
+      
       state.isPlaying = true; state.gameStartTime = state.clock.getElapsedTime();
       state.lastSpawn = state.clock.getElapsedTime() + 1.0; 
     }
 
-    function handleGestures() {
+    // DISTINCT GESTURE DETECTION (6 Actions)
+    function handleGestures(dt) {
       if (!state.activeController || !state.isPlaying || state.isBreak) return;
-      const currY = state.activeController.position.y; const currZ = state.activeController.rotation.z;
+
+      if (state.gestureCooldown > 0) state.gestureCooldown -= dt;
+
+      const currPos = state.activeController.position;
+      const currRot = state.activeController.rotation;
       
-      const velY = currY - lastCtrlY; const velZ = currZ - lastCtrlZ;
-      
-      // Tweaked tracking parameters for better up/down sensitivity
-      const threshY = 0.006, threshZ = 0.02;  
+      const velY = (currPos.y - lastCtrl.y) / dt;
+      const velX = (currPos.x - lastCtrl.x) / dt;
+      const velRotZ = (currRot.z - lastCtrl.rotZ) / dt; 
 
-      if (velY > threshY && !gestureActive.up) { triggerAction(0); gestureActive.up = true; }
-      else if (velY < -threshY && !gestureActive.down) { triggerAction(1); gestureActive.down = true; }
-      if (Math.abs(velY) < 0.003) { gestureActive.up = false; gestureActive.down = false; }
+      lastCtrl.y = currPos.y; lastCtrl.x = currPos.x; lastCtrl.rotZ = currRot.z;
 
-      if (velZ > threshZ && !gestureActive.left) { triggerAction(2); gestureActive.left = true; }
-      else if (velZ < -threshZ && !gestureActive.right) { triggerAction(3); gestureActive.right = true; }
-      if (Math.abs(velZ) < 0.01) { gestureActive.left = false; gestureActive.right = false; }
+      if (state.gestureCooldown <= 0) {
+        const linearThreshold = 0.8; // m/s
+        const twistThreshold = 1.8; // rad/s
 
-      // Reduced adaption speed (0.05) so abrupt human movements are easier to pick up
-      lastCtrlY += (currY - lastCtrlY) * 0.05; 
-      lastCtrlZ += (currZ - lastCtrlZ) * 0.05;
+        let actionTriggered = -1;
+
+        // If-Else chain prevents double-firing conflicting moves on the same frame
+        if (velY > linearThreshold) actionTriggered = 0; // 0: Swipe Up
+        else if (velY < -linearThreshold) actionTriggered = 1; // 1: Swipe Down
+        else if (velX < -linearThreshold) actionTriggered = 2; // 2: Swipe Left
+        else if (velX > linearThreshold) actionTriggered = 3; // 3: Swipe Right
+        else if (velRotZ > twistThreshold) actionTriggered = 4; // 4: Twist Left
+        else if (velRotZ < -twistThreshold) actionTriggered = 5; // 5: Twist Right
+
+        if (actionTriggered !== -1) {
+          triggerAction(actionTriggered);
+          state.gestureCooldown = 0.35; 
+        }
+      }
     }
 
     function triggerAction(actionType) {
       let closest = null;
       
-      // Calculate hit window using the Sausage Tail
       notes.forEach(note => {
         if (!note.userData.active) return;
-        
-        // Note moves towards positive Z. Front is at position.z, tail extends backwards.
-        // We account for the -0.05 gap added to prevent clipping.
         const frontZ = note.position.z;
         const tailEndZ = note.position.z - note.userData.length - 0.05; 
         
-        // If the HitRing (hitZoneZ) is anywhere between the front icon and the end of the tail
         if (CONSTANTS.hitZoneZ > tailEndZ - CONSTANTS.hitTolerance && CONSTANTS.hitZoneZ < frontZ + CONSTANTS.hitTolerance) {
           closest = note;
         }
@@ -480,30 +526,25 @@
         if (state.score > state.highScore) { state.highScore = state.score; localStorage.setItem('miceDanceHighScore', state.highScore.toString()); }
         updateUI();
         
-        const sounds = ['score1-sound', 'score2-sound', 'score3-sound'];
-        const snd = document.getElementById(sounds[Math.floor(Math.random()*sounds.length)]);
-        snd.currentTime = 0; snd.play().catch(()=>{});
+        playSynth('hit'); // Synthesizer success sound
         
-        const colors = [0x4ade80, 0xf472b6, 0x60a5fa, 0xfb923c];
+        const colors = [0x4ade80, 0xf472b6, 0x60a5fa, 0xfb923c, 0xa855f7, 0xeab308];
         triggerConfetti(closest.position, colors[actionType]);
         
-        if (actionType === 0) { // Jump
-          playerMouse.position.y = -0.15; setTimeout(() => playerMouse.position.y = -0.35, 200);
-        } else if (actionType === 1) { // Squat
-          playerMouse.scale.y = 0.5; playerMouse.position.y = -0.42;
-          setTimeout(() => { playerMouse.scale.y = 1.0; playerMouse.position.y = -0.35; }, 200);
-        } else if (actionType === 2) { // Twist Left
-          playerMouse.rotation.y = 1.0; setTimeout(() => playerMouse.rotation.y = 0, 200);
-        } else if (actionType === 3) { // Twist Right
-          playerMouse.rotation.y = -1.0; setTimeout(() => playerMouse.rotation.y = 0, 200);
-        }
+        if (actionType === 0) pTarget.y = -0.10; // Jump
+        else if (actionType === 1) { pTarget.scaleY = 0.6; pTarget.y = -0.38; } // Squat
+        else if (actionType === 2) pTarget.rotZ = 0.5; // Lean Left (Swipe)
+        else if (actionType === 3) pTarget.rotZ = -0.5; // Lean Right (Swipe)
+        else if (actionType === 4) pTarget.rotY = 1.0; // Twist Left (Swirl)
+        else if (actionType === 5) pTarget.rotY = -1.0; // Twist Right (Swirl)
 
-        hitRing.material.color.setHex(0x00ff00); setTimeout(() => hitRing.material.color.setHex(0xffffff), 100);
+        ringColorTarget.setHex(0x00ff00);
       } else {
         if (closest) {
-          state.combo = 0; updateUI(); document.getElementById('death-sound').play().catch(()=>{});
-          hitRing.material.color.setHex(0xff0000); setTimeout(() => hitRing.material.color.setHex(0xffffff), 100);
-          playerMouse.rotation.z = 0.5; setTimeout(() => { playerMouse.rotation.z = 0; }, 200);
+          // NO FAILURE SOUND: Only gentle visual feedback for failing to hit
+          state.combo = 0; updateUI(); 
+          ringColorTarget.setHex(0xff0000);
+          pTarget.rotZ = 0.5; // Stumble animation
         }
       }
     }
@@ -542,67 +583,102 @@
     }
 
     function render(time, frame) {
-      const dt = Math.min(state.clock.getDelta(), 1/30);
+      const dt = Math.min(state.clock.getDelta(), 0.1); 
       if (!frame) return;
       if (state.isControllerSelection) processControllerSelection(); else checkClap();
       drawClapHUD();
 
+      // PHYSICS INTERPOLATION (LERPING)
+      playerMouse.position.y += (pTarget.y - playerMouse.position.y) * 15 * dt;
+      playerMouse.rotation.y += (pTarget.rotY - playerMouse.rotation.y) * 15 * dt;
+      playerMouse.rotation.z += (pTarget.rotZ - playerMouse.rotation.z) * 15 * dt;
+      playerMouse.scale.y += (pTarget.scaleY - playerMouse.scale.y) * 15 * dt;
+      
+      pTarget.y += (-0.33 - pTarget.y) * 5 * dt;
+      pTarget.rotY += (0 - pTarget.rotY) * 5 * dt;
+      pTarget.rotZ += (0 - pTarget.rotZ) * 5 * dt;
+      pTarget.scaleY += (1.0 - pTarget.scaleY) * 5 * dt;
+
+      if (hitRing) {
+        hitRing.material.color.lerp(ringColorTarget, 10 * dt);
+        ringColorTarget.lerp(new THREE.Color(0xffffff), 3 * dt);
+      }
+
       if (state.isPlaying && !state.isControllerSelection) {
-        handleGestures();
+        handleGestures(dt);
         const gameTime = state.clock.getElapsedTime() - state.gameStartTime;
         const cyclePos = gameTime % state.cycleTime;
         
-        // --- BACKGROUND MICE DANCE LOGIC ---
-        if (cyclePos > 15) {
-          // BREAK TIME: Level up the dance!
+        const beat = time * 3.0;
+        const bounce = Math.abs(Math.sin(beat));
+
+        // 45 SECONDS ACTIVE, 10 SECONDS BREAK
+        if (cyclePos > 45) {
+          // BREAK TIME: Dance sequence
           if (!state.isBreak) { state.isBreak = true; hitRing.visible = false; scorePanel.position.y = 10; }
           
           bgMice.forEach((m) => {
-            const t = time * 4.0 + m.offset;
-            // High bouncy jumps
-            const jump = Math.max(0, Math.sin(t));
-            m.mesh.position.y = -0.35 + jump * 0.3;
-            // Fast spinning
-            m.mesh.rotation.y += dt * 6.0;
-            // Front flips in the air!
-            m.mesh.rotation.x = jump * Math.PI * 1.5; 
+            const targetX = m.baseX + Math.sin(beat * 0.5) * 0.15; 
+            const targetY = -0.33 + (bounce * 0.08); 
+            const targetRotY = (m.baseX < 0 ? 0.2 : -0.2) + Math.sin(beat * 0.5) * 0.3;
+            const targetRotZ = Math.sin(beat * 0.5) * -0.15; 
+
+            const lerpSpeed = 10;
+            m.mesh.position.x += (targetX - m.mesh.position.x) * lerpSpeed * dt;
+            m.mesh.position.y += (targetY - m.mesh.position.y) * lerpSpeed * dt;
+            
+            let diffY = (targetRotY - m.mesh.rotation.y) % (Math.PI * 2);
+            if (diffY > Math.PI) diffY -= Math.PI * 2;
+            if (diffY < -Math.PI) diffY += Math.PI * 2;
+            m.mesh.rotation.y += diffY * lerpSpeed * dt;
+
+            m.mesh.rotation.z += (targetRotZ - m.mesh.rotation.z) * lerpSpeed * dt;
+            m.mesh.rotation.x += (0 - m.mesh.rotation.x) * lerpSpeed * dt;
+            m.mesh.scale.y += (1.0 - m.mesh.scale.y) * lerpSpeed * dt;
           });
         } else {
-          // ACTIVE TIME: Keep the rhythm without distracting the player
-          if (state.isBreak) { 
-            state.isBreak = false; hitRing.visible = true; scorePanel.position.y = 0.1; 
-            bgMice.forEach(m => { m.mesh.position.y = -0.35; m.mesh.rotation.x = 0; }); 
-          }
+          // ACTIVE TIME: Mice are calm
+          if (state.isBreak) { state.isBreak = false; hitRing.visible = true; scorePanel.position.y = 0.1; }
           
           bgMice.forEach(m => { 
-            // Sharp rhythm "bop" instead of distracting swirling
-            const beat = (time * 2.5 + m.offset) % 2; 
-            const bop = beat < 0.15 ? 0.04 : 0; 
-            m.mesh.position.y = -0.35 + bop;
+            const targetX = m.baseX;
+            const targetY = -0.33 + (Math.abs(Math.sin(time * 2)) * 0.02); 
+            const targetRotY = m.baseX < 0 ? 0.3 : -0.3; 
+            const targetRotZ = 0;
             
-            // Keep them facing front, disable front flips from break mode
-            m.mesh.rotation.x = 0;
-            m.mesh.rotation.y = m.offset === 0 ? 0.5 : -0.5;
+            const lerpSpeed = 8;
+            m.mesh.position.x += (targetX - m.mesh.position.x) * lerpSpeed * dt; 
+            m.mesh.position.y += (targetY - m.mesh.position.y) * lerpSpeed * dt;
+            
+            let diffY = (targetRotY - m.mesh.rotation.y) % (Math.PI * 2);
+            if (diffY > Math.PI) diffY -= Math.PI * 2;
+            if (diffY < -Math.PI) diffY += Math.PI * 2;
+            m.mesh.rotation.y += diffY * lerpSpeed * dt;
+
+            m.mesh.rotation.z += (targetRotZ - m.mesh.rotation.z) * lerpSpeed * dt;
+            m.mesh.rotation.x += (0 - m.mesh.rotation.x) * lerpSpeed * dt;
+            m.mesh.scale.y += (1.0 - m.mesh.scale.y) * lerpSpeed * dt;
           });
 
-          if (state.clock.getElapsedTime() - state.lastSpawn > state.spawnInterval) {
-            spawnNote(gameTime); // Pass gameTime for phase logic
-            state.lastSpawn = state.clock.getElapsedTime();
-            state.spawnInterval = Math.max(1.2, 2.5 - (gameTime * 0.015)); 
+          // Buffer: Ensure no notes spawn 3 seconds before the break begins!
+          if (cyclePos < 42.0) {
+            if (state.clock.getElapsedTime() - state.lastSpawn > state.spawnInterval) {
+              spawnNote(gameTime);
+              state.lastSpawn = state.clock.getElapsedTime();
+              state.spawnInterval = Math.max(1.2, 2.5 - (gameTime * 0.015)); 
+            }
           }
         }
 
         for (let i = notes.length - 1; i >= 0; i--) {
           const n = notes[i]; n.position.z += state.trackSpeed * dt;
           
-          // Keep Icon facing the user
           n.children[0].quaternion.copy(camera.quaternion);
 
-          // Remove note if the ENTIRE tail passes the HitRing (Accounting for gap)
           if (n.position.z - n.userData.length - 0.05 > 0.2) { 
             if (n.userData.active) {
-              state.combo = 0; updateUI(); hitRing.material.color.setHex(0xff0000);
-              setTimeout(() => hitRing.material.color.setHex(0xffffff), 100);
+              state.combo = 0; updateUI(); 
+              ringColorTarget.setHex(0xff0000); // Visual only!
             }
             scene.remove(n); notes.splice(i, 1);
           }
