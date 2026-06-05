@@ -2,7 +2,7 @@
 <html lang="da">
 <head>
   <meta charset="utf-8">
-  <title>Musene Danser - NXT/Care (Take 10 - Cozy Table)</title>
+  <title>Musene Danser - NXT/Care (Take 11 - Dance Studio Integration)</title>
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <style>
     :root {
@@ -128,7 +128,6 @@
         osc.start(now);
         osc.stop(now + 0.3);
       }
-      // Note: 'miss' sound intentionally removed for a gentler experience!
     }
  
     // --- GAME STATE ---
@@ -140,7 +139,8 @@
       cycleTime: 55, // 45s dance, 10s break
       isBreak: false, trackSpeed: 1.5,
       lastSpawn: 0, spawnInterval: 2.5,
-      gestureCooldown: 0 
+      gestureCooldown: 0,
+      lastActionTime: -999, activePlayerMove: null
     };
  
     const CONSTANTS = {
@@ -148,25 +148,20 @@
       trackX: 0.4, 
       trackY: 0.0,  
       hitZoneZ: -0.6, spawnZ: -4.0, 
-      hitTolerance: 0.35 // Massively increased tolerance
+      hitTolerance: 0.35
     };
  
-    // Single source of truth for where a mouse rests on the table.
-    // The Derpy model's body base sits at local y=0 (the old model was at y=-0.02),
-    // so -0.35 places the new mice in the EXACT same world space as the originals.
     const MOUSE_BASE_Y = -0.35;
  
     // --- GLOBALS ---
     let camera, scene, renderer, backgroundMusic;
     let tableGroup, playerMouse, bgMice = [], scorePanel, comboText;
-    const worldRefs = {}; // Holds animated candle/vapor refs for the table scene
+    const worldRefs = {}; 
     let controllers = [], particles = [], particlePool = [];
     let notes = [], hitRing;
     let noteMaterials = [];
     let clapStart = 0, clapHUD = null;
     
-    // Animation Targets
-    const pTarget = { y: MOUSE_BASE_Y, rotY: 0, rotZ: 0, scaleY: 1.0 };
     const ringColorTarget = new THREE.Color(0xffffff);
  
     // Gesture Tracking Variables
@@ -174,31 +169,59 @@
     let isLaunching = false, toastTimeout;
  
     // --- DERPY HUSMUS CONFIGS ---
-    // Configuration for "Derpy Husmus (Fjollet)"
     const derpyMouseConfig = {
-      bodyColor: 0x78736e,
-      bellyColor: 0xd5d2cd,
-      earColor: 0x78736e,
-      innerEarColor: 0xcca8a8,
-      noseColor: 0x302a28,
-      tailLength: 0.18,
-      tailThickness: 0.007,
-      tailCurl: 1,
-      bodyScale: [1, 1, 1],
-      earScale: [1, 1, 1],
-      earRotZ: 0.3,         // Ears angled slightly outwards
-      whiskerColor: 0xeeeeee,
-      whiskerLength: 0.08,
-      whiskerSpread: 0.4,   // Extra wide, chaotic whiskers
-      eyeScale: 1.2,        // Slightly oversized eyes
-      eyeSpacing: 0.045     // Wide-set eyes for that perfect derp look
+      bodyColor: 0x78736e, bellyColor: 0xd5d2cd, earColor: 0x78736e, innerEarColor: 0xcca8a8,
+      noseColor: 0x302a28, whiskerColor: 0xeeeeee,
+      bodyScale: [1, 1, 1]
     };
- 
-    // Two background dancers — same derpy species, distinguishable fur.
     const derpyBrownConfig = { ...derpyMouseConfig,
-      bodyColor: 0x8d6e63, earColor: 0x8d6e63, bellyColor: 0xc7b0a3 };
+      bodyColor: 0x8d6e63, earColor: 0x8d6e63, bellyColor: 0xc7b0a3,
+      bodyScale: [0.9, 0.9, 0.9]
+    };
     const derpyCreamConfig = { ...derpyMouseConfig,
-      bodyColor: 0xece6d4, earColor: 0xece6d4, bellyColor: 0xfaf6ea, innerEarColor: 0xe0b8b8 };
+      bodyColor: 0xece6d4, earColor: 0xece6d4, bellyColor: 0xfaf6ea, innerEarColor: 0xe0b8b8,
+      bodyScale: [0.95, 0.95, 0.95]
+    };
+
+    // --- ANIMATION LIBRARY (From Dance Studio) ---
+    // Background Moves
+    const discoPoint = (rig, time) => {
+      const speed = 6;
+      const beat = Math.sin(time * speed);
+      rig.armR.rotation.z = beat > 0 ? -Math.PI/1.2 : 0;
+      rig.armR.rotation.x = beat > 0 ? 0 : Math.PI/2.5;
+      rig.armL.rotation.z = beat < 0 ? Math.PI/1.2 : 0;
+      rig.armL.rotation.x = beat < 0 ? 0 : Math.PI/2.5;
+      rig.pelvis.position.y = 0.13 + Math.abs(beat) * 0.03;
+      rig.pelvis.rotation.y = Math.sin(time * speed / 2) * 0.5;
+    };
+
+    const crazyFrog = (rig, time) => {
+      rig.pelvis.position.y = 0.10 + Math.abs(Math.sin(time*12))*0.03;
+      rig.pelvis.rotation.x = 0.4;
+      rig.legL.rotation.set(Math.PI/2, 0.8, 0);
+      rig.legR.rotation.set(Math.PI/2, -0.8, 0);
+      rig.armL.rotation.set(Math.PI/2.5, 0, 0.4);
+      rig.armR.rotation.set(Math.PI/2.5, 0, -0.4);
+      rig.head.rotation.z = Math.sin(time*6)*0.3;
+      rig.head.rotation.y = Math.sin(time*6)*0.2;
+    };
+
+    // Player Moves (Action Time starts at 0 on gesture trigger)
+    const playerMoves = [
+      (rig, time) => { const b = Math.max(0, Math.sin(time * 8)); rig.root.position.y = b * 0.12; rig.armR.rotation.set(Math.PI, 0, -0.5); rig.armR.rotation.y = time * 15; rig.armL.rotation.set(0, 0, 0.5); }, // UP (Lasso)
+      (rig, time) => { const d = Math.max(0, Math.sin(time * 8)); rig.pelvis.position.y = 0.13 - d * 0.06; rig.pelvis.rotation.x = d * 0.8; rig.head.rotation.x = -d * 0.8; rig.armL.rotation.set(Math.PI/2, 0, 0.5); rig.armR.rotation.set(Math.PI/2, 0, -0.5); }, // DOWN (Duck)
+      (rig, time) => { const s = Math.max(0, Math.sin(time * 6)); rig.root.position.x = -s * 0.15; rig.pelvis.rotation.z = s * 0.2; rig.armL.rotation.set(Math.PI/2, 0, 0.5 + s); rig.armR.rotation.set(Math.PI/2, 0, -0.5 + s); }, // LEFT (Slide L)
+      (rig, time) => { const s = Math.max(0, Math.sin(time * 6)); rig.root.position.x = s * 0.15; rig.pelvis.rotation.z = -s * 0.2; rig.armL.rotation.set(Math.PI/2, 0, 0.5 - s); rig.armR.rotation.set(Math.PI/2, 0, -0.5 - s); }, // RIGHT (Slide R)
+      (rig, time) => { rig.root.rotation.y = time * 5; rig.armL.rotation.x = time * -12; rig.armR.rotation.x = time * -12 + Math.PI; rig.pelvis.position.y = 0.13 + Math.sin(time*10)*0.02; }, // TWIST L (Windmill)
+      (rig, time) => { rig.root.rotation.y = -time * 5; rig.armR.rotation.x = time * 12; rig.armL.rotation.x = time * 12 + Math.PI; rig.pelvis.position.y = 0.13 + Math.sin(time*10)*0.02; }  // TWIST R (Windmill)
+    ];
+
+    const playerMissStumble = (rig, time) => {
+      const t = Math.min(time * 2.0, 1.0); // Play over 0.5 seconds
+      rig.root.rotation.z = Math.sin(t * Math.PI) * 0.4;
+      rig.head.rotation.x = Math.sin(t * Math.PI) * 0.5;
+    };
  
     // ---------- helpers ----------
     function makeUITexture(canvas) {
@@ -239,7 +262,7 @@
  
       generateNoteTextures();
  
-      // Audio setup - Only the background music requires an external file
+      // Audio setup - Local file required for specific music
       backgroundMusic = new Audio('Musmusik.mp3');
       backgroundMusic.loop = true; 
       backgroundMusic.volume = 0.7;
@@ -249,10 +272,8 @@
         if (isLaunching) return;
         isLaunching = true;
         
-        initSynth(); // Init Audio Context on user interaction
-        
-        // Starts background music IMMEDIATELY upon clicking the launch button
-        backgroundMusic.play().catch(err => console.warn("Audio unlock pending interaction", err));
+        initSynth();
+        backgroundMusic.play().catch(err => console.warn("Audio pending interaction", err));
  
         const toast = document.getElementById('toast');
         toast.classList.add('show');
@@ -264,7 +285,6 @@
       document.getElementById('exit-ar').addEventListener('click', endAR);
     }
  
-    // 6 distinct gesture blocks
     function generateNoteTextures() {
       const colors = ['#4ade80', '#f472b6', '#60a5fa', '#fb923c', '#a855f7', '#eab308']; 
       for (let i = 0; i < 6; i++) {
@@ -325,18 +345,20 @@
     }
  
     function buildWorld() {
-      // Table + Royal Copenhagen teacup + giant candle live in their own cohesive builder.
       tableGroup = buildTableScene(scene, worldRefs);
  
-      playerMouse = createAdvancedMouse(derpyMouseConfig); 
-      playerMouse.position.set(0, MOUSE_BASE_Y, -1.2); scene.add(playerMouse);
+      // Main Player
+      playerMouse = createRiggedMouse(derpyMouseConfig); 
+      playerMouse.position.set(0, MOUSE_BASE_Y, -1.2); 
+      scene.add(playerMouse);
  
-      const bgMouse1 = createAdvancedMouse(derpyBrownConfig); 
-      bgMouse1.position.set(-0.5, MOUSE_BASE_Y, -1.5); bgMouse1.rotation.y = 0.3;
+      // Background Dancers
+      const bgMouse1 = createRiggedMouse(derpyBrownConfig); 
+      bgMouse1.position.set(-0.5, MOUSE_BASE_Y, -1.5); 
       scene.add(bgMouse1); bgMice.push({ mesh: bgMouse1, offset: 0, baseX: -0.5 });
  
-      const bgMouse2 = createAdvancedMouse(derpyCreamConfig); 
-      bgMouse2.position.set(0.5, MOUSE_BASE_Y, -1.4); bgMouse2.rotation.y = -0.3;
+      const bgMouse2 = createRiggedMouse(derpyCreamConfig); 
+      bgMouse2.position.set(0.5, MOUSE_BASE_Y, -1.4); 
       scene.add(bgMouse2); bgMice.push({ mesh: bgMouse2, offset: Math.PI, baseX: 0.5 });
  
       hitRing = new THREE.Mesh(
@@ -349,143 +371,85 @@
       buildUI();
     }
  
-    /**
-     * Builds the dining-table assembly: rustic table + legs, Royal Copenhagen
-     * teacup (with rising steam) and a giant candle (with its own warm light).
-     * Returns the tableGroup so the orchestrator can track it for teardown.
-     * @param {THREE.Scene} scene
-     * @param {Object} refs - stores animated candle/vapor references
-     * @returns {THREE.Group}
-     */
     function buildTableScene(scene, refs = {}) {
       refs.animatedCandles = refs.animatedCandles || [];
       refs.animatedVapors = refs.animatedVapors || [];
  
       const tableGroup = new THREE.Group();
- 
-      // 1. Table Top (H.C. Andersen meets Ghibli warm rustic wood)
       const tableGeo = new THREE.BoxGeometry(2.2, 0.1, 1.5);
       const tableMat = new THREE.MeshStandardMaterial({ color: 0x3e2723, roughness: 0.9, metalness: 0.1 });
       const table = new THREE.Mesh(tableGeo, tableMat);
       table.position.set(0, -0.4, -1.2);
       tableGroup.add(table);
  
-      // Table Legs (anchor the scene visually)
       const legGeo = new THREE.BoxGeometry(0.12, 0.8, 0.12);
-      const legPositions = [
-        [-1.0, -0.85, -0.55], [1.0, -0.85, -0.55],
-        [-1.0, -0.85, -1.85], [1.0, -0.85, -1.85]
-      ];
+      const legPositions = [ [-1.0, -0.85, -0.55], [1.0, -0.85, -0.55], [-1.0, -0.85, -1.85], [1.0, -0.85, -1.85] ];
       legPositions.forEach(pos => {
         const leg = new THREE.Mesh(legGeo, tableMat);
         leg.position.set(...pos);
         tableGroup.add(leg);
       });
  
-      // 2. The Royal Copenhagen Teacup (Blue Fluted)
       const cupGroup = new THREE.Group();
       const topR = 0.13, botR = 0.07, footR = 0.06, height = 0.18, footHeight = 0.02, segs = 32;
- 
-      const pMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1 });   // porcelain
-      const bMat = new THREE.MeshBasicMaterial({ color: 0x0033a0, side: THREE.DoubleSide }); // RC Blue
-      const tMat = new THREE.MeshStandardMaterial({ color: 0x3a1f04, roughness: 0.1 });    // tea liquid
+      const pMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.1 }); 
+      const bMat = new THREE.MeshBasicMaterial({ color: 0x0033a0, side: THREE.DoubleSide }); 
+      const tMat = new THREE.MeshStandardMaterial({ color: 0x3a1f04, roughness: 0.1 }); 
  
       const foot = new THREE.Mesh(new THREE.CylinderGeometry(footR, footR * 0.9, footHeight, segs, 1, false), pMat);
-      foot.position.y = footHeight / 2;
-      cupGroup.add(foot);
- 
+      foot.position.y = footHeight / 2; cupGroup.add(foot);
       const body = new THREE.Mesh(new THREE.CylinderGeometry(topR, botR, height, segs, 1, false), pMat);
-      body.position.y = footHeight + (height / 2);
-      cupGroup.add(body);
+      body.position.y = footHeight + (height / 2); cupGroup.add(body);
  
-      // Swept "ear" handle via CatmullRomCurve3
       const handlePts = [
-        new THREE.Vector3(-topR * 0.95, height * 0.85 + footHeight, 0),
-        new THREE.Vector3(-topR * 1.5, height * 0.9 + footHeight, 0),
-        new THREE.Vector3(-topR * 1.6, height * 0.4 + footHeight, 0),
-        new THREE.Vector3(-botR * 1.4, height * 0.25 + footHeight, 0),
+        new THREE.Vector3(-topR * 0.95, height * 0.85 + footHeight, 0), new THREE.Vector3(-topR * 1.5, height * 0.9 + footHeight, 0),
+        new THREE.Vector3(-topR * 1.6, height * 0.4 + footHeight, 0), new THREE.Vector3(-botR * 1.4, height * 0.25 + footHeight, 0),
         new THREE.Vector3(-botR * 0.95, height * 0.2 + footHeight, 0)
       ];
       const handleGeo = new THREE.TubeGeometry(new THREE.CatmullRomCurve3(handlePts), 24, 0.012, 8, false);
       cupGroup.add(new THREE.Mesh(handleGeo, pMat));
  
-      // Slip-cast attachment knobs
       const knobGeo = new THREE.SphereGeometry(0.012 * 1.5, 8, 8);
       const kTop = new THREE.Mesh(knobGeo, pMat); kTop.position.copy(handlePts[0]);
       const kBot = new THREE.Mesh(knobGeo, pMat); kBot.position.copy(handlePts[handlePts.length - 1]);
       cupGroup.add(kTop, kBot);
  
-      // Glazed blue rim lines
-      [{ radius: topR + 0.001, y: footHeight + height - 0.01 },
-       { radius: topR + 0.001, y: footHeight + height - 0.03 }].forEach(r => {
+      [{ radius: topR + 0.001, y: footHeight + height - 0.01 }, { radius: topR + 0.001, y: footHeight + height - 0.03 }].forEach(r => {
         const rimMesh = new THREE.Mesh(new THREE.CylinderGeometry(r.radius, r.radius, 0.006, segs, 1, true), bMat);
-        rimMesh.position.y = r.y;
-        cupGroup.add(rimMesh);
+        rimMesh.position.y = r.y; cupGroup.add(rimMesh);
       });
  
-      // Tea liquid
       const teaY = footHeight + height * 0.85;
-      const teaR = topR * 0.92;
-      const tea = new THREE.Mesh(new THREE.CylinderGeometry(teaR, teaR, 0.05, segs), tMat);
-      tea.position.y = teaY;
-      cupGroup.add(tea);
+      const tea = new THREE.Mesh(new THREE.CylinderGeometry(topR * 0.92, topR * 0.92, 0.05, segs), tMat);
+      tea.position.y = teaY; cupGroup.add(tea);
  
-      // Rising steam vapor
-      const vaporGroup = new THREE.Group();
-      vaporGroup.position.y = teaY + 0.02;
+      const vaporGroup = new THREE.Group(); vaporGroup.position.y = teaY + 0.02;
       for (let i = 0; i < 3; i++) {
-        const v = new THREE.Mesh(
-          new THREE.SphereGeometry(0.025, 8, 8),
-          new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 })
-        );
+        const v = new THREE.Mesh(new THREE.SphereGeometry(0.025, 8, 8), new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: 0.35 }));
         v.position.set((Math.random() - 0.5) * 0.06, Math.random() * 0.15, (Math.random() - 0.5) * 0.06);
-        v.userData = { speed: 0.4 + Math.random() * 0.4, baseY: v.position.y };
-        vaporGroup.add(v);
+        v.userData = { speed: 0.4 + Math.random() * 0.4, baseY: v.position.y }; vaporGroup.add(v);
       }
-      cupGroup.add(vaporGroup);
-      refs.animatedVapors.push(vaporGroup);
+      cupGroup.add(vaporGroup); refs.animatedVapors.push(vaporGroup);
  
-      cupGroup.position.set(-0.8, -0.35, -1.2); // out of the rhythm track
-      cupGroup.rotation.y = 0.5;
+      cupGroup.position.set(-0.8, -0.35, -1.2); cupGroup.rotation.y = 0.5;
       tableGroup.add(cupGroup);
  
-      // 3. Giant Candle (localized atmospheric light)
       const candleGroup = new THREE.Group();
-      const cBase = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.06, 0.06, 0.4, 32),
-        new THREE.MeshStandardMaterial({ color: 0xfffdd0, roughness: 0.7 })
-      );
+      const cBase = new THREE.Mesh(new THREE.CylinderGeometry(0.06, 0.06, 0.4, 32), new THREE.MeshStandardMaterial({ color: 0xfffdd0, roughness: 0.7 }));
       cBase.position.y = 0.2; candleGroup.add(cBase);
- 
-      const cFlame = new THREE.Mesh(
-        new THREE.ConeGeometry(0.02, 0.06, 16),
-        new THREE.MeshBasicMaterial({ color: 0xff9900 })
-      );
+      const cFlame = new THREE.Mesh(new THREE.ConeGeometry(0.02, 0.06, 16), new THREE.MeshBasicMaterial({ color: 0xff9900 }));
       cFlame.position.y = 0.43; candleGroup.add(cFlame);
- 
-      const cPlate = new THREE.Mesh(
-        new THREE.CylinderGeometry(0.12, 0.1, 0.02, 32),
-        new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.2 })
-      );
+      const cPlate = new THREE.Mesh(new THREE.CylinderGeometry(0.12, 0.1, 0.02, 32), new THREE.MeshStandardMaterial({ color: 0xd4af37, metalness: 0.8, roughness: 0.2 }));
       cPlate.position.y = 0.01; candleGroup.add(cPlate);
+      const cLight = new THREE.PointLight(0xffaa55, 1.5, 3); cLight.position.y = 0.45; candleGroup.add(cLight);
  
-      const cLight = new THREE.PointLight(0xffaa55, 1.5, 3);
-      cLight.position.y = 0.45; candleGroup.add(cLight);
- 
-      candleGroup.position.set(0.9, -0.35, -1.6); // out of the rhythm track
-      tableGroup.add(candleGroup);
+      candleGroup.position.set(0.9, -0.35, -1.6); tableGroup.add(candleGroup);
       refs.animatedCandles.push({ flame: cFlame, light: cLight });
  
       scene.add(tableGroup);
       return tableGroup;
     }
  
-    /**
-     * Per-frame animation for the table set: flickering candle + rising steam.
-     * @param {number} time - elapsed seconds (state.clock.elapsedTime)
-     * @param {number} dt
-     * @param {Object} refs
-     */
     function animateTableScene(time, dt, refs) {
       if (refs.animatedCandles) {
         refs.animatedCandles.forEach(c => {
@@ -500,26 +464,23 @@
             v.position.y += 0.004 * v.userData.speed;
             v.material.opacity = 0.35 * (1 - (v.position.y / 0.5));
             if (v.position.y > 0.4) {
-              v.position.y = v.userData.baseY;
-              v.position.x = (Math.random() - 0.5) * 0.06;
-              v.position.z = (Math.random() - 0.5) * 0.06;
+              v.position.y = v.userData.baseY; v.position.x = (Math.random() - 0.5) * 0.06; v.position.z = (Math.random() - 0.5) * 0.06;
               v.material.opacity = 0.35;
             }
           });
         });
       }
     }
- 
-    /**
-     * Advanced Mouse Generator optimized for Meta Quest 3 (Low Poly, High Detail).
-     * Replaces the old `createCuteMouse` function. Uses the module-scope THREE.
-     * @param {Object} config - The mouse configuration object (e.g., derpyMouseConfig)
-     * @returns {THREE.Group} - The complete 3D mouse model
-     */
-    function createAdvancedMouse(config) {
-      const group = new THREE.Group();
- 
-      // Materials Cache - Reused to save memory draw calls on Quest 3
+
+    // --- RIGGED MOUSE GENERATOR (Integrated from Dance Studio) ---
+    function createRiggedMouse(config) {
+      const container = new THREE.Group(); // World Container (Handles world positions)
+      const root = new THREE.Group(); // Master rig container (Handles local animation roots)
+      
+      // Apply configured scaling to the master rig
+      root.scale.set(config.bodyScale[0], config.bodyScale[1], config.bodyScale[2]);
+      container.add(root);
+
       const matBody = new THREE.MeshStandardMaterial({ color: config.bodyColor, roughness: 0.8 });
       const matBelly = new THREE.MeshStandardMaterial({ color: config.bellyColor, roughness: 0.9 });
       const matEar = new THREE.MeshStandardMaterial({ color: config.earColor, roughness: 0.9 });
@@ -527,148 +488,97 @@
       const matNose = new THREE.MeshStandardMaterial({ color: config.noseColor, roughness: 0.4 });
       const matEye = new THREE.MeshBasicMaterial({ color: 0x111111 });
       const matHighlight = new THREE.MeshBasicMaterial({ color: 0xffffff });
- 
-      // 1. Body & Belly
-      const baseBodyGroup = new THREE.Group();
-      
-      const bodyGeo = new THREE.CapsuleGeometry(0.08, 0.1, 8, 16);
-      const body = new THREE.Mesh(bodyGeo, matBody);
-      body.position.y = 0.13;
-      body.castShadow = true;
-      baseBodyGroup.add(body);
- 
-      // Flattened belly slightly offset forward
-      const bellyGeo = new THREE.CapsuleGeometry(0.065, 0.08, 8, 12);
-      const belly = new THREE.Mesh(bellyGeo, matBelly);
-      belly.position.set(0, 0.12, 0.025);
-      belly.scale.set(1, 1, 0.7);
-      baseBodyGroup.add(belly);
-      
-      // Apply body scaling
-      baseBodyGroup.scale.set(config.bodyScale[0], config.bodyScale[1], config.bodyScale[2]);
-      group.add(baseBodyGroup);
- 
-      // 2. Head Group (Ears, Eyes, Snout)
-      const headHeight = 0.13 + (0.05 * config.bodyScale[1]);
-      
-      // Snout
-      const snoutGeo = new THREE.SphereGeometry(0.035, 12, 12);
-      const snout = new THREE.Mesh(snoutGeo, matBelly);
-      snout.scale.set(1, 0.8, 1.4);
-      snout.position.set(0, headHeight - 0.02, 0.07 * config.bodyScale[2]);
-      group.add(snout);
- 
-      // Nose
-      const noseGeo = new THREE.SphereGeometry(0.012, 8, 8);
-      const nose = new THREE.Mesh(noseGeo, matNose);
-      nose.position.set(0, headHeight - 0.01, (0.07 * config.bodyScale[2]) + 0.045);
-      group.add(nose);
- 
-      // Whiskers (Mouth Bristles) - Paper thin cylinders optimized for VR
-      const whiskerLength = config.whiskerLength || 0.08;
-      const whiskerGeo = new THREE.CylinderGeometry(0.001, 0.0005, whiskerLength, 4);
-      whiskerGeo.translate(0, whiskerLength / 2, 0); 
-      const whiskerMat = new THREE.MeshStandardMaterial({ color: config.whiskerColor || 0xeeeeee, roughness: 0.5 });
- 
-      const createWhiskerSide = (isRight) => {
-        const sideGroup = new THREE.Group();
-        const spread = config.whiskerSpread || 0.2;
-        
-        // 3 whiskers per side
-        for(let i = -1; i <= 1; i++) {
-          const w = new THREE.Mesh(whiskerGeo, whiskerMat);
-          w.rotation.z = isRight ? -Math.PI/2 : Math.PI/2; 
-          w.rotation.x = i * spread; 
-          w.rotation.y = isRight ? 0.2 : -0.2; 
-          sideGroup.add(w);
-        }
-        
-        sideGroup.position.set(isRight ? 0.025 : -0.025, headHeight - 0.02, (0.07 * config.bodyScale[2]) + 0.02);
-        return sideGroup;
-      };
-      group.add(createWhiskerSide(false), createWhiskerSide(true));
- 
-      // Eyes (Larger, cuter with highlights)
+
+      // Pelvis
+      const pelvis = new THREE.Group(); pelvis.position.y = 0.13; root.add(pelvis);
+      const bodyMesh = new THREE.Mesh(new THREE.CapsuleGeometry(0.08, 0.1, 8, 16), matBody); pelvis.add(bodyMesh);
+      const belly = new THREE.Mesh(new THREE.CapsuleGeometry(0.065, 0.08, 8, 12), matBelly);
+      belly.position.set(0, -0.01, 0.025); belly.scale.set(1, 1, 0.7); pelvis.add(belly);
+
+      // Head
+      const head = new THREE.Group(); head.position.set(0, 0.06, 0); pelvis.add(head);
+      const snout = new THREE.Mesh(new THREE.SphereGeometry(0.035, 12, 12), matBelly);
+      snout.scale.set(1, 0.8, 1.4); snout.position.set(0, 0, 0.07); head.add(snout);
+      const nose = new THREE.Mesh(new THREE.SphereGeometry(0.012, 8, 8), matNose);
+      nose.position.set(0, 0.01, 0.115); head.add(nose);
+
+      // Eyes
       const createEye = (x) => {
         const eyeGroup = new THREE.Group();
         const eye = new THREE.Mesh(new THREE.SphereGeometry(0.014, 12, 12), matEye);
-        
         const hl = new THREE.Mesh(new THREE.SphereGeometry(0.004, 8, 8), matHighlight);
-        hl.position.set(-0.005, 0.005, 0.012); 
-        eye.add(hl);
-        
+        hl.position.set(-0.005, 0.005, 0.012); eye.add(hl);
         const hl2 = new THREE.Mesh(new THREE.SphereGeometry(0.002, 6, 6), matHighlight);
-        hl2.position.set(0.006, -0.004, 0.012);
-        eye.add(hl2);
-        
-        const eScale = config.eyeScale || 1.0;
-        eyeGroup.scale.set(eScale, eScale, eScale);
-        eyeGroup.add(eye);
-        eyeGroup.position.set(x, headHeight + 0.02, 0.065 * config.bodyScale[2]);
-        return eyeGroup;
+        hl2.position.set(0.006, -0.004, 0.012); eye.add(hl2);
+        eyeGroup.scale.set(1.2, 1.2, 1.2); eyeGroup.add(eye);
+        eyeGroup.position.set(x, 0.04, 0.065); return eyeGroup;
       };
-      const spacing = config.eyeSpacing || 0.035;
-      group.add(createEye(-spacing), createEye(spacing));
- 
-      // Ears (Hierarchical structure)
+      head.add(createEye(-0.045), createEye(0.045));
+
+      // Ears
       const createEar = (x, isRight) => {
         const earGroup = new THREE.Group();
         const outer = new THREE.Mesh(new THREE.CylinderGeometry(0.045, 0.045, 0.01, 16), matEar);
-        const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.012, 16), matInnerEar);
-        
-        outer.rotation.x = Math.PI / 2;
-        inner.rotation.x = Math.PI / 2;
+        const inner = new THREE.Mesh(new THREE.CylinderGeometry(0.025, 0.025, 0.002, 16), matInnerEar);
+        outer.rotation.x = Math.PI / 2; inner.rotation.x = Math.PI / 2; inner.position.z = 0.005;
         earGroup.add(outer, inner);
-        earGroup.position.set(x, headHeight + 0.06, 0.02);
-        
-        earGroup.scale.set(config.earScale[0], config.earScale[1], config.earScale[2]);
-        earGroup.rotation.z = isRight ? -config.earRotZ : config.earRotZ;
-        earGroup.rotation.y = isRight ? -0.2 : 0.2;
-        earGroup.rotation.x = 0.1;
-        
+        earGroup.position.set(x, 0.08, 0.02);
+        earGroup.rotation.z = isRight ? -0.3 : 0.3; earGroup.rotation.y = isRight ? -0.2 : 0.2; earGroup.rotation.x = 0.1;
         return earGroup;
       };
-      group.add(createEar(-0.06 * config.bodyScale[0], false), createEar(0.06 * config.bodyScale[0], true));
- 
-      // 3. Limbs (Paws/Feet)
-      const pawGeo = new THREE.CapsuleGeometry(0.012, 0.02, 6, 8);
-      const createPaw = (x, y, z, rotX, rotZ) => {
-        const paw = new THREE.Mesh(pawGeo, matBody);
-        paw.position.set(x, y, z);
-        paw.rotation.set(rotX, 0, rotZ);
-        return paw;
-      };
-      group.add(createPaw(-0.06 * config.bodyScale[0], 0.12, 0.06, Math.PI/2.5, 0.2));
-      group.add(createPaw(0.06 * config.bodyScale[0], 0.12, 0.06, Math.PI/2.5, -0.2));
-      group.add(createPaw(-0.04 * config.bodyScale[0], 0.02, 0.05, Math.PI/2, 0.1));
-      group.add(createPaw(0.04 * config.bodyScale[0], 0.02, 0.05, Math.PI/2, -0.1));
- 
-      // 4. Tail (CatmullRomCurve3 into TubeGeometry)
-      const tailPoints = [];
-      const segments = 10;
-      for (let i = 0; i <= segments; i++) {
-        const t = i / segments;
-        const tz = -t * config.tailLength; 
-        const ty = 0.04 + Math.sin(t * Math.PI) * (0.05 * config.tailCurl); 
-        const tx = Math.sin(t * Math.PI * 0.5) * (0.02 * config.tailCurl); 
-        tailPoints.push(new THREE.Vector3(tx, ty, tz));
-      }
-      
-      const tailCurve = new THREE.CatmullRomCurve3(tailPoints);
-      const tailGeo = new THREE.TubeGeometry(tailCurve, segments, config.tailThickness, 6, false);
-      const tail = new THREE.Mesh(tailGeo, matBody);
-      tail.position.set(0, 0, -0.05 * config.bodyScale[2]); 
-      group.add(tail);
- 
-      // Shadow casting
-      group.traverse(child => {
-        if (child.isMesh) {
-          child.castShadow = true;
-          child.receiveShadow = true;
+      head.add(createEar(-0.06, false), createEar(0.06, true));
+
+      // Whiskers
+      const whiskerGeo = new THREE.CylinderGeometry(0.001, 0.0005, 0.08, 4);
+      whiskerGeo.translate(0, 0.04, 0); 
+      const whiskerMat = new THREE.MeshStandardMaterial({ color: config.whiskerColor, roughness: 0.5 });
+      const createWhiskers = (isRight) => {
+        const wGroup = new THREE.Group();
+        for(let i = -1; i <= 1; i++) {
+          const w = new THREE.Mesh(whiskerGeo, whiskerMat);
+          w.rotation.z = isRight ? -Math.PI/2 : Math.PI/2; 
+          w.rotation.x = i * 0.4; w.rotation.y = isRight ? 0.2 : -0.2; wGroup.add(w);
         }
-      });
- 
-      return group;
+        wGroup.position.set(isRight ? 0.025 : -0.025, 0, 0.09); return wGroup;
+      };
+      head.add(createWhiskers(false), createWhiskers(true));
+
+      // Limbs
+      const pawGeo = new THREE.CapsuleGeometry(0.012, 0.02, 6, 8); pawGeo.translate(0, -0.01, 0); 
+      const armL = new THREE.Group(); armL.add(new THREE.Mesh(pawGeo, matBody)); pelvis.add(armL);
+      const armR = new THREE.Group(); armR.add(new THREE.Mesh(pawGeo, matBody)); pelvis.add(armR);
+      const legL = new THREE.Group(); legL.add(new THREE.Mesh(pawGeo, matBody)); root.add(legL);
+      const legR = new THREE.Group(); legR.add(new THREE.Mesh(pawGeo, matBody)); root.add(legR);
+
+      // Tail
+      const tailGroup = new THREE.Group(); tailGroup.position.set(0, -0.08, -0.05);
+      const tailPoints = [];
+      for (let i = 0; i <= 10; i++) {
+        const t = i / 10;
+        tailPoints.push(new THREE.Vector3(Math.sin(t * Math.PI * 0.5) * 0.02, 0.04 + Math.sin(t * Math.PI) * 0.05, -t * 0.18));
+      }
+      tailGroup.add(new THREE.Mesh(new THREE.TubeGeometry(new THREE.CatmullRomCurve3(tailPoints), 10, 0.007, 6, false), matBody));
+      pelvis.add(tailGroup);
+
+      // Shadows
+      root.traverse(child => { if (child.isMesh) { child.castShadow = true; child.receiveShadow = true; } });
+
+      // Store Rig References directly in the container
+      container.userData.rig = { root, pelvis, head, armL, armR, legL, legR, tail: tailGroup };
+      resetPose(container.userData.rig);
+
+      return container;
+    }
+
+    function resetPose(rig) {
+      rig.root.position.set(0, 0, 0); rig.root.rotation.set(0, 0, 0);
+      rig.pelvis.position.set(0, 0.13, 0); rig.pelvis.rotation.set(0, 0, 0);
+      rig.head.rotation.set(0, 0, 0); rig.head.position.set(0, 0.06, 0);
+      rig.armL.position.set(-0.06, 0.02, 0.06); rig.armL.rotation.set(Math.PI/2.5, 0, 0.2);
+      rig.armR.position.set(0.06, 0.02, 0.06);  rig.armR.rotation.set(Math.PI/2.5, 0, -0.2);
+      rig.legL.position.set(-0.04, 0.03, 0.05); rig.legL.rotation.set(Math.PI/2, 0, 0.1);
+      rig.legR.position.set(0.04, 0.03, 0.05);  rig.legR.rotation.set(Math.PI/2, 0, -0.1);
+      rig.tail.rotation.set(0, 0, 0);
     }
  
     function createTextTex(text, color, size="42px") {
@@ -698,9 +608,7 @@
       swap(comboText, createTextTex(`Combo: ${state.combo}`, state.combo > 5 ? '#ff4444' : '#ffaa00', '36px'));
     }
  
-    // --- RHYTHM TRACK SYSTEM ---
     function spawnNote(gameTime) {
-      // Progressively introduce more gesture types
       const availableTypes = (gameTime < 15) ? [0, 1] : (gameTime < 30) ? [0, 1, 2, 3] : [0, 1, 2, 3, 4, 5];
       const type = availableTypes[Math.floor(Math.random() * availableTypes.length)];
       const colors = [0x4ade80, 0xf472b6, 0x60a5fa, 0xfb923c, 0xa855f7, 0xeab308];
@@ -709,15 +617,12 @@
       const noteLength = Math.random() * maxLength + 0.2; 
  
       const group = new THREE.Group();
-      
       const icon = new THREE.Mesh(new THREE.PlaneGeometry(0.25, 0.25), noteMaterials[type]);
       icon.position.z = 0; group.add(icon);
-      
       const tailGeo = new THREE.CylinderGeometry(0.08, 0.08, noteLength, 16);
       const tailMat = new THREE.MeshBasicMaterial({ color: colors[type], transparent: true, opacity: 0.6 });
       const tail = new THREE.Mesh(tailGeo, tailMat);
-      tail.rotation.x = Math.PI / 2;
-      tail.position.z = -(noteLength / 2) - 0.05; 
+      tail.rotation.x = Math.PI / 2; tail.position.z = -(noteLength / 2) - 0.05; 
       group.add(tail);
  
       group.position.set(CONSTANTS.trackX, CONSTANTS.trackY, CONSTANTS.spawnZ);
@@ -767,18 +672,14 @@
  
       triggerConfetti(state.activeController.position);
       playSynth('select'); 
-      
-      // Ensure the music continues smoothly if they confirm controller
       backgroundMusic.play().catch(() => {});
       
       state.isPlaying = true; state.gameStartTime = state.clock.getElapsedTime();
       state.lastSpawn = state.clock.getElapsedTime() + 1.0; 
     }
  
-    // DISTINCT GESTURE DETECTION (6 Actions)
     function handleGestures(dt) {
       if (!state.activeController || !state.isPlaying || state.isBreak) return;
- 
       if (state.gestureCooldown > 0) state.gestureCooldown -= dt;
  
       const currPos = state.activeController.position;
@@ -791,18 +692,16 @@
       lastCtrl.y = currPos.y; lastCtrl.x = currPos.x; lastCtrl.rotZ = currRot.z;
  
       if (state.gestureCooldown <= 0) {
-        const linearThreshold = 0.8; // m/s
-        const twistThreshold = 1.8; // rad/s
+        const linearThreshold = 0.8;
+        const twistThreshold = 1.8;
  
         let actionTriggered = -1;
- 
-        // If-Else chain prevents double-firing conflicting moves on the same frame
-        if (velY > linearThreshold) actionTriggered = 0; // 0: Swipe Up
-        else if (velY < -linearThreshold) actionTriggered = 1; // 1: Swipe Down
-        else if (velX < -linearThreshold) actionTriggered = 2; // 2: Swipe Left
-        else if (velX > linearThreshold) actionTriggered = 3; // 3: Swipe Right
-        else if (velRotZ > twistThreshold) actionTriggered = 4; // 4: Twist Left
-        else if (velRotZ < -twistThreshold) actionTriggered = 5; // 5: Twist Right
+        if (velY > linearThreshold) actionTriggered = 0;
+        else if (velY < -linearThreshold) actionTriggered = 1;
+        else if (velX < -linearThreshold) actionTriggered = 2;
+        else if (velX > linearThreshold) actionTriggered = 3;
+        else if (velRotZ > twistThreshold) actionTriggered = 4;
+        else if (velRotZ < -twistThreshold) actionTriggered = 5;
  
         if (actionTriggered !== -1) {
           triggerAction(actionTriggered);
@@ -813,7 +712,6 @@
  
     function triggerAction(actionType) {
       let closest = null;
-      
       notes.forEach(note => {
         if (!note.userData.active) return;
         const frontZ = note.position.z;
@@ -828,27 +726,24 @@
         closest.userData.active = false; closest.visible = false;
         state.combo++; state.score += 10 + (state.combo * 2);
         if (state.score > state.highScore) { state.highScore = state.score; localStorage.setItem('miceDanceHighScore', state.highScore.toString()); }
-        updateUI();
-        
-        playSynth('hit'); // Synthesizer success sound
+        updateUI(); playSynth('hit');
         
         const colors = [0x4ade80, 0xf472b6, 0x60a5fa, 0xfb923c, 0xa855f7, 0xeab308];
         triggerConfetti(closest.position, colors[actionType]);
         
-        if (actionType === 0) pTarget.y = MOUSE_BASE_Y + 0.23; // Jump
-        else if (actionType === 1) { pTarget.scaleY = 0.6; pTarget.y = MOUSE_BASE_Y - 0.05; } // Squat
-        else if (actionType === 2) pTarget.rotZ = 0.5; // Lean Left (Swipe)
-        else if (actionType === 3) pTarget.rotZ = -0.5; // Lean Right (Swipe)
-        else if (actionType === 4) pTarget.rotY = 1.0; // Twist Left (Swirl)
-        else if (actionType === 5) pTarget.rotY = -1.0; // Twist Right (Swirl)
- 
+        // Trigger Player Animation Frame based on Type
+        state.lastActionTime = state.clock.getElapsedTime() - state.gameStartTime;
+        state.activePlayerMove = playerMoves[actionType];
+
         ringColorTarget.setHex(0x00ff00);
       } else {
         if (closest) {
-          // NO FAILURE SOUND: Only gentle visual feedback for failing to hit
           state.combo = 0; updateUI(); 
           ringColorTarget.setHex(0xff0000);
-          pTarget.rotZ = 0.5; // Stumble animation
+
+          // Stumble Animation
+          state.lastActionTime = state.clock.getElapsedTime() - state.gameStartTime;
+          state.activePlayerMove = playerMissStumble;
         }
       }
     }
@@ -891,18 +786,7 @@
       if (!frame) return;
       if (state.isControllerSelection) processControllerSelection(); else checkClap();
       drawClapHUD();
-      animateTableScene(state.clock.elapsedTime, dt, worldRefs); // candle flicker + steam, always on
- 
-      // PHYSICS INTERPOLATION (LERPING)
-      playerMouse.position.y += (pTarget.y - playerMouse.position.y) * 15 * dt;
-      playerMouse.rotation.y += (pTarget.rotY - playerMouse.rotation.y) * 15 * dt;
-      playerMouse.rotation.z += (pTarget.rotZ - playerMouse.rotation.z) * 15 * dt;
-      playerMouse.scale.y += (pTarget.scaleY - playerMouse.scale.y) * 15 * dt;
-      
-      pTarget.y += (MOUSE_BASE_Y - pTarget.y) * 5 * dt;
-      pTarget.rotY += (0 - pTarget.rotY) * 5 * dt;
-      pTarget.rotZ += (0 - pTarget.rotZ) * 5 * dt;
-      pTarget.scaleY += (1.0 - pTarget.scaleY) * 5 * dt;
+      animateTableScene(state.clock.elapsedTime, dt, worldRefs); 
  
       if (hitRing) {
         hitRing.material.color.lerp(ringColorTarget, 10 * dt);
@@ -914,76 +798,60 @@
         const gameTime = state.clock.getElapsedTime() - state.gameStartTime;
         const cyclePos = gameTime % state.cycleTime;
         
-        const beat = time * 3.0;
-        const bounce = Math.abs(Math.sin(beat));
- 
         // 45 SECONDS ACTIVE, 10 SECONDS BREAK
         if (cyclePos > 45) {
-          // BREAK TIME: Dance sequence
           if (!state.isBreak) { state.isBreak = true; hitRing.visible = false; scorePanel.position.y = 10; }
-          
-          bgMice.forEach((m) => {
-            const targetX = m.baseX + Math.sin(beat * 0.5) * 0.15; 
-            const targetY = MOUSE_BASE_Y + (bounce * 0.08); 
-            const targetRotY = (m.baseX < 0 ? 0.2 : -0.2) + Math.sin(beat * 0.5) * 0.3;
-            const targetRotZ = Math.sin(beat * 0.5) * -0.15; 
- 
-            const lerpSpeed = 10;
-            m.mesh.position.x += (targetX - m.mesh.position.x) * lerpSpeed * dt;
-            m.mesh.position.y += (targetY - m.mesh.position.y) * lerpSpeed * dt;
-            
-            let diffY = (targetRotY - m.mesh.rotation.y) % (Math.PI * 2);
-            if (diffY > Math.PI) diffY -= Math.PI * 2;
-            if (diffY < -Math.PI) diffY += Math.PI * 2;
-            m.mesh.rotation.y += diffY * lerpSpeed * dt;
- 
-            m.mesh.rotation.z += (targetRotZ - m.mesh.rotation.z) * lerpSpeed * dt;
-            m.mesh.rotation.x += (0 - m.mesh.rotation.x) * lerpSpeed * dt;
-            m.mesh.scale.y += (1.0 - m.mesh.scale.y) * lerpSpeed * dt;
-          });
         } else {
-          // ACTIVE TIME: Mice are calm
           if (state.isBreak) { state.isBreak = false; hitRing.visible = true; scorePanel.position.y = 0.1; }
-          
-          bgMice.forEach(m => { 
-            const targetX = m.baseX;
-            const targetY = MOUSE_BASE_Y + (Math.abs(Math.sin(time * 2)) * 0.02); 
-            const targetRotY = m.baseX < 0 ? 0.3 : -0.3; 
-            const targetRotZ = 0;
-            
-            const lerpSpeed = 8;
-            m.mesh.position.x += (targetX - m.mesh.position.x) * lerpSpeed * dt; 
-            m.mesh.position.y += (targetY - m.mesh.position.y) * lerpSpeed * dt;
-            
-            let diffY = (targetRotY - m.mesh.rotation.y) % (Math.PI * 2);
-            if (diffY > Math.PI) diffY -= Math.PI * 2;
-            if (diffY < -Math.PI) diffY += Math.PI * 2;
-            m.mesh.rotation.y += diffY * lerpSpeed * dt;
- 
-            m.mesh.rotation.z += (targetRotZ - m.mesh.rotation.z) * lerpSpeed * dt;
-            m.mesh.rotation.x += (0 - m.mesh.rotation.x) * lerpSpeed * dt;
-            m.mesh.scale.y += (1.0 - m.mesh.scale.y) * lerpSpeed * dt;
-          });
- 
-          // Buffer: Ensure no notes spawn 3 seconds before the break begins!
-          if (cyclePos < 42.0) {
-            if (state.clock.getElapsedTime() - state.lastSpawn > state.spawnInterval) {
-              spawnNote(gameTime);
-              state.lastSpawn = state.clock.getElapsedTime();
-              state.spawnInterval = Math.max(1.2, 2.5 - (gameTime * 0.015)); 
-            }
+          if (cyclePos < 42.0 && state.clock.getElapsedTime() - state.lastSpawn > state.spawnInterval) {
+            spawnNote(gameTime);
+            state.lastSpawn = state.clock.getElapsedTime();
+            state.spawnInterval = Math.max(1.2, 2.5 - (gameTime * 0.015)); 
           }
         }
+        
+        // Process Background Mice Animation
+        bgMice.forEach((m, idx) => {
+          const rig = m.mesh.userData.rig;
+          resetPose(rig);
+          
+          // Face center slightly
+          rig.root.rotation.y = m.baseX < 0 ? 0.3 : -0.3;
+
+          if (state.isBreak) {
+            crazyFrog(rig, gameTime);
+          } else {
+            discoPoint(rig, gameTime + (idx * 0.5)); // slight time offset between mice
+          }
+          
+          rig.tail.rotation.y = Math.sin(gameTime * 10) * 0.1;
+        });
+
+        // Process Player Mouse Animation
+        const pRig = playerMouse.userData.rig;
+        resetPose(pRig);
+        const actionElapsed = gameTime - state.lastActionTime;
+
+        if (actionElapsed < 1.0 && state.activePlayerMove) {
+          // Play specific action for 1 second
+          state.activePlayerMove(pRig, actionElapsed);
+        } else {
+          // Idle Bounce
+          pRig.pelvis.position.y = 0.13 + Math.abs(Math.sin(gameTime * 2)) * 0.015;
+          pRig.armL.rotation.set(Math.PI/2.5, 0, 0.2 + Math.sin(gameTime)*0.05);
+          pRig.armR.rotation.set(Math.PI/2.5, 0, -0.2 - Math.sin(gameTime)*0.05);
+        }
+        pRig.tail.rotation.y = Math.sin(gameTime * 8) * 0.1;
  
+        // Track Notes
         for (let i = notes.length - 1; i >= 0; i--) {
           const n = notes[i]; n.position.z += state.trackSpeed * dt;
-          
           n.children[0].quaternion.copy(camera.quaternion);
  
           if (n.position.z - n.userData.length - 0.05 > 0.2) { 
             if (n.userData.active) {
               state.combo = 0; updateUI(); 
-              ringColorTarget.setHex(0xff0000); // Visual only!
+              ringColorTarget.setHex(0xff0000); 
             }
             scene.remove(n); notes.splice(i, 1);
           }
